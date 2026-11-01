@@ -29,8 +29,8 @@ ALERT_ROLE_ID    = 1566238799002992640   # rôle pingé dans #alertes
 FONDATEUR_ID     = 1419320803199029402   # mention dans les messages de ban / DM
 FONDATION_ID     = 1558327588710121554   # contact fondation pour l'avertissement
 
-MUTE_LIMIT = 4;  MUTE_WINDOW = 5  * 60   # 4 actions en 5 min
-DEAF_LIMIT = 4;  DEAF_WINDOW = 5  * 60   # 4 actions en 5 min
+MUTE_LIMIT = 2;  MUTE_WINDOW = 5  * 60   # 2 actions en 5 min
+DEAF_LIMIT = 2;  DEAF_WINDOW = 5  * 60   # 2 actions en 5 min
 DC_LIMIT   = 5;  DC_WINDOW   = 15 * 60   # 5 actions en 15 min
 
 _mute_track:  dict[int, list[float]] = {}
@@ -426,11 +426,9 @@ class RaidAlertView(discord.ui.View):
                     f"Tes rôles et permissions viennent d'être **restaurés** sur le serveur.\n\n"
                     f"Cependant, tu as été détecté par notre système de surveillance automatique "
                     f"(**Raidlogs**) pour **abus de permissions**.\n\n"
-                    f"__\n"
-                    f"🚫 **Ne répète pas ce comportement.**\n"
-                    f"Tout nouvel abus entraînera un **bannissement immédiat et définitif** du serveur, "
-                    f"sans possibilité d'appel.\n"
-                    f"__\n\n"
+                    f"\n> 🚫 **Ne répète pas ce comportement.**\n"
+                    f"> Tout nouvel abus entraînera un **bannissement immédiat et définitif** du serveur, "
+                    f"sans possibilité d'appel.\n\n"
                     f"En cas de question, contacte <@{FONDATION_ID}> et un membre de la fondation te répondra."
                 ),
             )
@@ -578,8 +576,7 @@ async def _sanction(
         title=f"🚨 ALERTE RAIDLOGS - {label}",
         color=0xFF0000,
         description=(
-            f"**Une activité suspecte a été détectée et neutralisée automatiquement.**\n"
-            f"__\n\n"
+            f">>> 🔴 **Menace neutralisée automatiquement par le système de protection.**\n\n"
             f"**👤 Membre visé**\n"
             f"{member.mention}  •  `{discord.utils.escape_markdown(str(member))}`\n"
             f"`{member.id}`\n\n"
@@ -589,11 +586,10 @@ async def _sanction(
             f"**🕐 Infos compte**\n"
             f"Créé : {_ago(member.created_at)}  •  Arrivé : {_ago(member.joined_at)}\n"
             f"Rang le plus haut : **{rang}**\n\n"
-            f"**⚙️ Sanction automatique**\n"
+            f"**⚙️ Sanction appliquée**\n"
             f"{riposte}\n"
             f"Rôles mis de côté : {roles_saved_fmt}\n\n"
-            f"__\n"
-            f"*Utilisez les boutons ci-dessous pour gérer la suite.*"
+            f"*Sélectionnez une action ci-dessous pour traiter ce cas.*"
         ),
     )
     alert_embed.set_thumbnail(url=member.display_avatar.url)
@@ -690,6 +686,8 @@ async def on_ready():
     if _started: return
     _started = True
     guild = client.get_guild(GUILD_ID)
+
+    # Embed logs
     e = discord.Embed(title="✅ Bot de logs en ligne", color=GREEN)
     if guild:
         e.description = f"Surveillance du serveur **{guild.name}** démarrée."
@@ -700,6 +698,30 @@ async def on_ready():
         e.color = RED
         e.description = "⚠️ Le bot n'est pas dans le serveur configuré (GUILD_ID)."
     emit(e)
+
+    # Embed alerte démarrage dans #alertes
+    if guild:
+        alert_ch = guild.get_channel(ALERT_ID)
+        if alert_ch:
+            try:
+                startup_embed = discord.Embed(
+                    title="🟢 Système de protection en ligne",
+                    color=0x57F287,
+                    description=(
+                        f">>> ✅ **Le système Raidlogs est opérationnel.**\n\n"
+                        f"**🛡️ Serveur surveillé :** {guild.name}\n"
+                        f"**🔍 Détection active :**\n"
+                        f"🔇 Mutes abusifs : {MUTE_LIMIT} en {MUTE_WINDOW // 60} min\n"
+                        f"🎧 Sourds abusifs : {DEAF_LIMIT} en {DEAF_WINDOW // 60} min\n"
+                        f"🔌 Déconnexions abusives : {DC_LIMIT} en {DC_WINDOW // 60} min\n\n"
+                        f"*Toute infraction déclenchera une alerte dans ce salon.*"
+                    ),
+                )
+                startup_embed.set_footer(text="Shotojo • Système de surveillance automatique")
+                startup_embed.timestamp = now()
+                await alert_ch.send(embed=startup_embed)
+            except Exception:
+                traceback.print_exc()
 
 # ════════════════════════════════════════════════════════════════
 #  MESSAGES : suppression
@@ -847,26 +869,7 @@ async def on_message(message):
     except Exception:
         traceback.print_exc()
 
-@client.event
-async def on_raw_reaction_add(payload):
-    if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID: return
-    bot = " 🤖" if payload.member and payload.member.bot else ""
-    e = discord.Embed(title="Reaction ajoutee", color=GREEN,
-        description=f"<@{payload.user_id}>{bot} (`{payload.user_id}`) a reagi {payload.emoji} sur [ce message]({link(payload.channel_id, payload.message_id)}) dans <#{payload.channel_id}>")
-    emit(e)
-
-@client.event
-async def on_raw_reaction_remove(payload):
-    if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID: return
-    e = discord.Embed(title="Reaction retiree", color=GREY,
-        description=f"<@{payload.user_id}> (`{payload.user_id}`) a retire {payload.emoji} sur [ce message]({link(payload.channel_id, payload.message_id)}) dans <#{payload.channel_id}>")
-    emit(e)
-
-@client.event
-async def on_raw_reaction_clear(payload):
-    if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID: return
-    emit(discord.Embed(title="Toutes les reactions retirees", color=ORANGE,
-        description=f"Sur [ce message]({link(payload.channel_id, payload.message_id)}) dans <#{payload.channel_id}>"))
+# Réactions : non loggées (trop fréquentes, peu utiles)
 
 # ════════════════════════════════════════════════════════════════
 #  MEMBRES
@@ -936,26 +939,8 @@ VOICE_FLAGS = [
     ("self_stream", "📺 Partage d'ecran"), ("self_video", "📷 Camera"), ("suppress", "🚫 Supprime (stage)"),
 ]
 
-@client.event
-async def on_voice_state_update(member, before, after):
-    if member.guild.id != GUILD_ID: return
-    if before.channel != after.channel:
-        if before.channel is None:
-            e = discord.Embed(title="🔊 Connexion vocal", color=GREEN, description=f"{who(member)}\nA rejoint {after.channel.mention}")
-        elif after.channel is None:
-            e = discord.Embed(title="🔇 Deconnexion vocal", color=RED, description=f"{who(member)}\nA quitte {before.channel.mention}")
-        else:
-            e = discord.Embed(title="Changement de vocal", color=ORANGE,
-                description=f"{who(member)}\n{before.channel.mention} -> {after.channel.mention}")
-        emit(e)
-    lines = []
-    for attr, label in VOICE_FLAGS:
-        if getattr(before, attr) != getattr(after, attr):
-            lines.append(f"{label} : {'✅ active' if getattr(after, attr) else '❌ desactive'}")
-    if lines:
-        chan = after.channel or before.channel
-        emit(discord.Embed(title="Etat vocal modifie", color=BLUE,
-            description=f"{who(member)}" + (f" dans {chan.mention}" if chan else "") + "\n" + "\n".join(lines)))
+# Vocal : connexions/déconnexions non loggées (trop fréquentes, peu utiles)
+# Le raid sur les déconnexions forcées est toujours détecté via on_audit_log_entry_create
 
 # ════════════════════════════════════════════════════════════════
 #  AUTOMOD
@@ -1009,7 +994,29 @@ LABELS = {
 }
 RED_ACTIONS = {"kick", "ban", "member_prune", "member_disconnect", "automod_block_message", "automod_timeout_member"}
 GREEN_ACTIONS = {"unban", "bot_add"}
-SKIP_AUDIT = {discord.AuditLogAction.message_delete, discord.AuditLogAction.message_bulk_delete}
+SKIP_AUDIT = {
+    discord.AuditLogAction.message_delete,
+    discord.AuditLogAction.message_bulk_delete,
+    # Vocal (connexions, déplacements, états) : trop fréquents
+    discord.AuditLogAction.member_move,
+    discord.AuditLogAction.member_disconnect,
+    # Threads : peu utiles en surveillance
+    discord.AuditLogAction.thread_create,
+    discord.AuditLogAction.thread_update,
+    discord.AuditLogAction.thread_delete,
+    # Evénements planifiés : pas pertinent sécurité
+    discord.AuditLogAction.scheduled_event_create,
+    discord.AuditLogAction.scheduled_event_update,
+    discord.AuditLogAction.scheduled_event_delete,
+    # Stage : rare et peu critique
+    discord.AuditLogAction.stage_instance_create,
+    discord.AuditLogAction.stage_instance_update,
+    discord.AuditLogAction.stage_instance_delete,
+    # Intégrations : pas actionnables
+    discord.AuditLogAction.integration_create,
+    discord.AuditLogAction.integration_update,
+    discord.AuditLogAction.integration_delete,
+}
 
 def audit_color(entry):
     n = entry.action.name
