@@ -27,6 +27,7 @@ ALERT_ID         = 1566453465129943181
 MUTED_ROLE_ID    = 1560089046842216450
 ALERT_ROLE_ID    = 1566238799002992640   # rôle pingé dans #alertes
 FONDATEUR_ID     = 1419320803199029402   # mention dans les messages de ban / DM
+FONDATION_ID     = 1558327588710121554   # contact fondation pour l'avertissement
 
 MUTE_LIMIT = 4;  MUTE_WINDOW = 5  * 60   # 4 actions en 5 min
 DEAF_LIMIT = 4;  DEAF_WINDOW = 5  * 60   # 4 actions en 5 min
@@ -243,9 +244,9 @@ class RaidAlertView(discord.ui.View):
         self.member_name    = member_name
         self.saved_role_ids = saved_role_ids
 
-    # ── Bouton 1 : Contacter en MP ──────────────────────────────
+    # ── Bouton 1 : Prendre en charge ────────────────────────────
     @discord.ui.button(
-        label="Contacter en MP",
+        label="Prendre en charge",
         style=discord.ButtonStyle.primary,
         emoji="✉️",
         custom_id="raid_dm",
@@ -259,30 +260,41 @@ class RaidAlertView(discord.ui.View):
             await interaction.followup.send("❌ Impossible de trouver ce membre sur le serveur.", ephemeral=True)
             return
 
+        handler = interaction.user  # la personne qui a cliqué
+
         try:
             dm_embed = discord.Embed(
-                title="⚠️  Action requise — Serveur Shotojo",
+                title="⚠️ Action requise - Serveur Shotojo",
                 color=0xFAA61A,
                 description=(
                     f"Bonjour {member.mention},\n\n"
-                    f"Suite à une **détection automatique de raidlogs**, tes permissions ont été temporairement suspendues.\n\n"
-                    f"Pour récupérer tes rôles et accès sur le serveur, **contacte rapidement** "
-                    f"<@{FONDATEUR_ID}> en message privé.\n\n"
-                    f"> ⏱️ Plus tu attends, plus la procédure sera longue."
+                    f"Un **Fondateur** du serveur te contacte suite à une détection automatique de **Raidlogs**.\n"
+                    f"Tes permissions ont été temporairement suspendues.\n\n"
+                    f"Pour récupérer tes rôles et accès sur le serveur, contacte rapidement "
+                    f"{handler.mention} en message privé.\n\n"
+                    f"> Plus tu attends, plus la procédure sera longue."
                 ),
             )
             dm_embed.set_footer(text="Shotojo • Système de surveillance automatique")
             dm_embed.timestamp = now()
             await member.send(embed=dm_embed)
-            await interaction.followup.send(f"✅ Message privé envoyé à **{discord.utils.escape_markdown(str(member))}**.", ephemeral=True)
+            await interaction.followup.send(
+                f"✅ Message privé envoyé à **{discord.utils.escape_markdown(str(member))}**.\n"
+                f"Le membre a été invité à te contacter en MP.",
+                ephemeral=True,
+            )
 
             # Log dans #raidlogs
             log_ch = guild.get_channel(RAID_LOG_ID)
             if log_ch:
                 log_e = discord.Embed(
-                    title="✉️  DM envoyé au membre sanctionné",
+                    title="✉️ Prise en charge - Raidlogs",
                     color=0x5865F2,
-                    description=f"{member.mention} (`{member.id}`) a reçu une demande de contact MP.\nAction demandée par {interaction.user.mention}.",
+                    description=(
+                        f"{member.mention} (`{member.id}`) a reçu un DM de prise en charge.\n"
+                        f"Pris en charge par {handler.mention}.\n"
+                        f"Le membre a été invité à contacter {handler.mention} en MP."
+                    ),
                 )
                 log_e.timestamp = now()
                 await log_ch.send(embed=log_e)
@@ -307,18 +319,30 @@ class RaidAlertView(discord.ui.View):
             await interaction.followup.send("❌ Serveur introuvable.", ephemeral=True)
             return
 
-        ban_reason = (
-            f"Raidlogs, bannissement immédiat décidé par un Fondateur. "
-            f"Si tu veux demander pardon va dm <@{FONDATEUR_ID}>"
+        ban_reason = "Raidlogs, bannissement immédiat décidé par un Fondateur."
+        ban_dm_text = (
+            f"Tu as été banni(e) de **Shotojo 🌸 #🇯🇵** pour la raison suivante : "
+            f"`Raidlogs, bannissement immédiat décidé par un Fondateur`.\n\n"
+            f"Si tu veux demander pardon viens ici : https://discord.gg/rAjayCuyyu"
         )
         try:
+            # Envoyer le DM AVANT le ban (après le ban on ne peut plus DM)
+            member = guild.get_member(self.member_id)
+            if member:
+                try:
+                    await member.send(ban_dm_text)
+                except discord.Forbidden:
+                    pass  # DMs fermés, on ban quand même
+                except Exception:
+                    traceback.print_exc()
+
             await guild.ban(
                 discord.Object(id=self.member_id),
                 reason=ban_reason,
                 delete_message_days=0,
             )
             await interaction.followup.send(
-                f"✅ **{discord.utils.escape_markdown(self.member_name)}** (`{self.member_id}`) a été banni.",
+                f"✅ **{discord.utils.escape_markdown(self.member_name)}** (`{self.member_id}`) a été banni et notifié en MP.",
                 ephemeral=True,
             )
 
@@ -330,7 +354,7 @@ class RaidAlertView(discord.ui.View):
             log_ch = guild.get_channel(RAID_LOG_ID)
             if log_ch:
                 log_e = discord.Embed(
-                    title="🔨  Bannissement — Raidlogs",
+                    title="🔨 Bannissement - Raidlogs",
                     color=0xED4245,
                     description=(
                         f"<@{self.member_id}> (`{self.member_id}`) a été **banni** suite à un raidlogs.\n"
@@ -395,19 +419,19 @@ class RaidAlertView(discord.ui.View):
         # DM d'avertissement stylé
         try:
             warn_embed = discord.Embed(
-                title="⚠️  Avertissement officiel — Shotojo",
+                title="⚠️ Avertissement officiel - Shotojo",
                 color=0xFAA61A,
                 description=(
                     f"Bonjour {member.mention},\n\n"
                     f"Tes rôles et permissions viennent d'être **restaurés** sur le serveur.\n\n"
                     f"Cependant, tu as été détecté par notre système de surveillance automatique "
                     f"(**Raidlogs**) pour **abus de permissions**.\n\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🚫  **Ne répète pas ce comportement.**\n"
+                    f"__\n"
+                    f"🚫 **Ne répète pas ce comportement.**\n"
                     f"Tout nouvel abus entraînera un **bannissement immédiat et définitif** du serveur, "
                     f"sans possibilité d'appel.\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"En cas de question, contacte <@{FONDATEUR_ID}>."
+                    f"__\n\n"
+                    f"En cas de question, contacte <@{FONDATION_ID}> et un membre de la fondation te répondra."
                 ),
             )
             warn_embed.set_footer(text="Shotojo • Système de surveillance automatique")
@@ -418,8 +442,11 @@ class RaidAlertView(discord.ui.View):
         except Exception:
             traceback.print_exc()
 
-        # Remettre sous surveillance (retirer de _sanctioned)
+        # Remettre sous surveillance : retirer de _sanctioned ET reset les timers
         _sanctioned.discard(self.member_id)
+        _mute_track.pop(self.member_id, None)
+        _deaf_track.pop(self.member_id, None)
+        _dc_track.pop(self.member_id, None)
         # Conserver les rôles sauvegardés pour un éventuel nouvel incident
         # (ils seront réécrasés par _sanction si ça recommence)
 
@@ -548,33 +575,33 @@ async def _sanction(
     #  EMBED ALERTE (salon #alertes — stylé + ping + boutons)
     # ════════════════════════════════════════════════════════════
     alert_embed = discord.Embed(
-        title=f"🚨  ALERTE RAIDLOGS — {label}",
+        title=f"🚨 ALERTE RAIDLOGS - {label}",
         color=0xFF0000,
         description=(
             f"**Une activité suspecte a été détectée et neutralisée automatiquement.**\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"__\n\n"
             f"**👤 Membre visé**\n"
             f"{member.mention}  •  `{discord.utils.escape_markdown(str(member))}`\n"
             f"`{member.id}`\n\n"
             f"**📊 Activité détectée**\n"
-            f"{emoji}  **{label}**\n"
-            f"→ **{count} actions** en **{window_min} min** (limite : {limit})\n\n"
+            f"{emoji} **{label}**\n"
+            f"**{count} actions** en **{window_min} min** (limite : {limit})\n\n"
             f"**🕐 Infos compte**\n"
-            f"Créé : {_ago(member.created_at)}  ·  Arrivé : {_ago(member.joined_at)}\n"
+            f"Créé : {_ago(member.created_at)}  •  Arrivé : {_ago(member.joined_at)}\n"
             f"Rang le plus haut : **{rang}**\n\n"
             f"**⚙️ Sanction automatique**\n"
             f"{riposte}\n"
             f"Rôles mis de côté : {roles_saved_fmt}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"__\n"
             f"*Utilisez les boutons ci-dessous pour gérer la suite.*"
         ),
     )
     alert_embed.set_thumbnail(url=member.display_avatar.url)
     alert_embed.set_author(
-        name="Système Raidlogs • Alerte automatique",
+        name="Système Raidlogs - Alerte automatique",
         icon_url=guild.icon.url if guild.icon else discord.Embed.Empty,
     )
-    alert_embed.set_footer(text=f"ID membre : {member.id}  •  Shotojo Surveillance")
+    alert_embed.set_footer(text=f"ID membre : {member.id} - Shotojo Surveillance")
     alert_embed.timestamp = now()
 
     alert_view = RaidAlertView(
