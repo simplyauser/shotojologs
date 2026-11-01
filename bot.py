@@ -22,18 +22,22 @@ GREEN, RED, ORANGE, BLUE, GREY = 0x57F287, 0xED4245, 0xFAA61A, 0x5865F2, 0x95A5A
 # ════════════════════════════════════════════════════════════════
 #  RAID CONFIG
 # ════════════════════════════════════════════════════════════════
-RAID_LOG_ID   = 1566453272959778866
-ALERT_ID      = 1566453465129943181
-MUTED_ROLE_ID = 1560089046842216450
+RAID_LOG_ID      = 1566453272959778866
+ALERT_ID         = 1566453465129943181
+MUTED_ROLE_ID    = 1560089046842216450
+ALERT_ROLE_ID    = 1566238799002992640   # rôle pingé dans #alertes
+FONDATEUR_ID     = 1419320803199029402   # mention dans les messages de ban / DM
 
 MUTE_LIMIT = 4;  MUTE_WINDOW = 5  * 60   # 4 actions en 5 min
 DEAF_LIMIT = 4;  DEAF_WINDOW = 5  * 60   # 4 actions en 5 min
 DC_LIMIT   = 5;  DC_WINDOW   = 15 * 60   # 5 actions en 15 min
 
-_mute_track: dict[int, list[float]] = {}
-_deaf_track: dict[int, list[float]] = {}
-_dc_track:   dict[int, list[float]] = {}
-_sanctioned: set[int] = set()
+_mute_track:  dict[int, list[float]] = {}
+_deaf_track:  dict[int, list[float]] = {}
+_dc_track:    dict[int, list[float]] = {}
+_sanctioned:  set[int] = set()
+# Sauvegarde des rôles avant dérank  { member_id: [role_id, ...] }
+_saved_roles: dict[int, list[int]]  = {}
 
 # ════════════════════════════════════════════════════════════════
 #  HELPERS
@@ -227,6 +231,230 @@ def _add_event(store: dict, uid: int, window: int) -> int:
     store[uid] = [x for x in store[uid] if t - x <= window]
     return len(store[uid])
 
+# ────────────────────────────────────────────────────────────────
+#  VUE INTERACTIVE — boutons de l'alerte raidlogs
+# ────────────────────────────────────────────────────────────────
+class RaidAlertView(discord.ui.View):
+    """Boutons attachés à l'alerte dans #alertes."""
+
+    def __init__(self, member_id: int, member_name: str, saved_role_ids: list[int]):
+        super().__init__(timeout=None)   # persistant jusqu'au redémarrage
+        self.member_id      = member_id
+        self.member_name    = member_name
+        self.saved_role_ids = saved_role_ids
+
+    # ── Bouton 1 : Contacter en MP ──────────────────────────────
+    @discord.ui.button(
+        label="Contacter en MP",
+        style=discord.ButtonStyle.primary,
+        emoji="✉️",
+        custom_id="raid_dm",
+    )
+    async def btn_dm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        guild  = interaction.guild
+        member = guild.get_member(self.member_id) if guild else None
+
+        if member is None:
+            await interaction.followup.send("❌ Impossible de trouver ce membre sur le serveur.", ephemeral=True)
+            return
+
+        try:
+            dm_embed = discord.Embed(
+                title="⚠️  Action requise — Serveur Shotojo",
+                color=0xFAA61A,
+                description=(
+                    f"Bonjour {member.mention},\n\n"
+                    f"Suite à une **détection automatique de raidlogs**, tes permissions ont été temporairement suspendues.\n\n"
+                    f"Pour récupérer tes rôles et accès sur le serveur, **contacte rapidement** "
+                    f"<@{FONDATEUR_ID}> en message privé.\n\n"
+                    f"> ⏱️ Plus tu attends, plus la procédure sera longue."
+                ),
+            )
+            dm_embed.set_footer(text="Shotojo • Système de surveillance automatique")
+            dm_embed.timestamp = now()
+            await member.send(embed=dm_embed)
+            await interaction.followup.send(f"✅ Message privé envoyé à **{discord.utils.escape_markdown(str(member))}**.", ephemeral=True)
+
+            # Log dans #raidlogs
+            log_ch = guild.get_channel(RAID_LOG_ID)
+            if log_ch:
+                log_e = discord.Embed(
+                    title="✉️  DM envoyé au membre sanctionné",
+                    color=0x5865F2,
+                    description=f"{member.mention} (`{member.id}`) a reçu une demande de contact MP.\nAction demandée par {interaction.user.mention}.",
+                )
+                log_e.timestamp = now()
+                await log_ch.send(embed=log_e)
+
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Impossible d'envoyer un DM à cet utilisateur (DMs fermés ou bloqués).", ephemeral=True)
+        except Exception:
+            traceback.print_exc()
+            await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
+
+    # ── Bouton 2 : Bannir ───────────────────────────────────────
+    @discord.ui.button(
+        label="Bannir l'utilisateur",
+        style=discord.ButtonStyle.danger,
+        emoji="🔨",
+        custom_id="raid_ban",
+    )
+    async def btn_ban(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        if guild is None:
+            await interaction.followup.send("❌ Serveur introuvable.", ephemeral=True)
+            return
+
+        ban_reason = (
+            f"Raidlogs, bannissement immédiat décidé par un Fondateur. "
+            f"Si tu veux demander pardon va dm <@{FONDATEUR_ID}>"
+        )
+        try:
+            await guild.ban(
+                discord.Object(id=self.member_id),
+                reason=ban_reason,
+                delete_message_days=0,
+            )
+            await interaction.followup.send(
+                f"✅ **{discord.utils.escape_markdown(self.member_name)}** (`{self.member_id}`) a été banni.",
+                ephemeral=True,
+            )
+
+            # Nettoyage mémoire
+            _sanctioned.discard(self.member_id)
+            _saved_roles.pop(self.member_id, None)
+
+            # Log dans #raidlogs
+            log_ch = guild.get_channel(RAID_LOG_ID)
+            if log_ch:
+                log_e = discord.Embed(
+                    title="🔨  Bannissement — Raidlogs",
+                    color=0xED4245,
+                    description=(
+                        f"<@{self.member_id}> (`{self.member_id}`) a été **banni** suite à un raidlogs.\n"
+                        f"Décision prise par {interaction.user.mention}.\n\n"
+                        f"**Raison :** {ban_reason}"
+                    ),
+                )
+                log_e.timestamp = now()
+                await log_ch.send(embed=log_e)
+
+            # Désactiver les boutons du message d'alerte
+            for item in self.children:
+                item.disabled = True
+            try:
+                await interaction.message.edit(view=self)
+            except Exception:
+                pass
+
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Je n'ai pas la permission de bannir cet utilisateur.", ephemeral=True)
+        except Exception:
+            traceback.print_exc()
+            await interaction.followup.send("❌ Une erreur est survenue lors du bannissement.", ephemeral=True)
+
+    # ── Bouton 3 : Réattribuer les rôles ────────────────────────
+    @discord.ui.button(
+        label="Réattribuer les rôles",
+        style=discord.ButtonStyle.success,
+        emoji="🔓",
+        custom_id="raid_restore",
+    )
+    async def btn_restore(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        guild  = interaction.guild
+        member = guild.get_member(self.member_id) if guild else None
+
+        if member is None:
+            await interaction.followup.send("❌ Ce membre n'est plus sur le serveur.", ephemeral=True)
+            return
+
+        muted_role = guild.get_role(MUTED_ROLE_ID)
+        saved      = self.saved_role_ids or []
+
+        # Retirer le rôle muet
+        try:
+            if muted_role and muted_role in member.roles:
+                await member.remove_roles(muted_role, reason="[RAID] Réattribution manuelle des rôles")
+        except Exception:
+            traceback.print_exc()
+
+        # Remettre les rôles sauvegardés
+        roles_to_add = [guild.get_role(rid) for rid in saved if guild.get_role(rid) is not None]
+        roles_to_add = [r for r in roles_to_add if not r.managed and r.id != guild.id]
+        restored_ok  = False
+        try:
+            if roles_to_add:
+                await member.add_roles(*roles_to_add, reason="[RAID] Réattribution manuelle des rôles")
+            restored_ok = True
+        except Exception:
+            traceback.print_exc()
+
+        # DM d'avertissement stylé
+        try:
+            warn_embed = discord.Embed(
+                title="⚠️  Avertissement officiel — Shotojo",
+                color=0xFAA61A,
+                description=(
+                    f"Bonjour {member.mention},\n\n"
+                    f"Tes rôles et permissions viennent d'être **restaurés** sur le serveur.\n\n"
+                    f"Cependant, tu as été détecté par notre système de surveillance automatique "
+                    f"(**Raidlogs**) pour **abus de permissions**.\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🚫  **Ne répète pas ce comportement.**\n"
+                    f"Tout nouvel abus entraînera un **bannissement immédiat et définitif** du serveur, "
+                    f"sans possibilité d'appel.\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"En cas de question, contacte <@{FONDATEUR_ID}>."
+                ),
+            )
+            warn_embed.set_footer(text="Shotojo • Système de surveillance automatique")
+            warn_embed.timestamp = now()
+            await member.send(embed=warn_embed)
+        except discord.Forbidden:
+            pass  # DMs fermés, on continue quand même
+        except Exception:
+            traceback.print_exc()
+
+        # Remettre sous surveillance (retirer de _sanctioned)
+        _sanctioned.discard(self.member_id)
+        # Conserver les rôles sauvegardés pour un éventuel nouvel incident
+        # (ils seront réécrasés par _sanction si ça recommence)
+
+        roles_list = ", ".join(r.mention for r in roles_to_add) if roles_to_add else "aucun rôle à restaurer"
+        await interaction.followup.send(
+            f"✅ Rôles restaurés pour **{discord.utils.escape_markdown(str(member))}** : {roles_list}\n"
+            f"Il est de nouveau sous surveillance Raidlogs.",
+            ephemeral=True,
+        )
+
+        # Log dans #raidlogs
+        log_ch = guild.get_channel(RAID_LOG_ID)
+        if log_ch:
+            log_e = discord.Embed(
+                title="🔓  Rôles réattribués — Raidlogs",
+                color=0x57F287,
+                description=(
+                    f"{member.mention} (`{member.id}`) a retrouvé ses permissions.\n"
+                    f"Décision prise par {interaction.user.mention}.\n"
+                    f"Rôles restaurés : {roles_list}\n\n"
+                    f"⚠️ Ce membre est de nouveau surveillé par le système Raidlogs."
+                ),
+            )
+            log_e.timestamp = now()
+            await log_ch.send(embed=log_e)
+
+        # Désactiver les boutons du message d'alerte
+        for item in self.children:
+            item.disabled = True
+        try:
+            await interaction.message.edit(view=self)
+        except Exception:
+            pass
+
+
 async def _sanction(
     guild: discord.Guild,
     member: discord.Member,
@@ -252,6 +480,9 @@ async def _sanction(
     muted_role = guild.get_role(MUTED_ROLE_ID)
     to_remove  = [r for r in member.roles if r.id != guild.id and not r.managed]
 
+    # ── Sauvegarder les rôles pour la réattribution future ──────
+    _saved_roles[member.id] = [r.id for r in to_remove]
+
     derank_ok = mute_ok = False
     try:
         if to_remove:
@@ -273,7 +504,15 @@ async def _sanction(
                 (["✅ Mute effectué"]   if mute_ok   else ["❌ Mute échoué"])
         riposte = "\n".join(parts)
 
-    e = discord.Embed(
+    roles_saved_fmt = (
+        ", ".join(f"<@&{rid}>" for rid in _saved_roles.get(member.id, []))
+        or "aucun"
+    )
+
+    # ════════════════════════════════════════════════════════════
+    #  EMBED RAIDLOGS (salon #raidlogs — log discret)
+    # ════════════════════════════════════════════════════════════
+    log_embed = discord.Embed(
         title=f"{emoji}  {label}",
         color=color,
         description=(
@@ -286,24 +525,83 @@ async def _sanction(
             f"{riposte}"
         ),
     )
-    e.set_thumbnail(url=member.display_avatar.url)
-    e.timestamp = now()
+    log_embed.set_thumbnail(url=member.display_avatar.url)
+    log_embed.set_footer(text="Raidlogs • Surveillance automatique")
+    log_embed.timestamp = now()
 
-    view = discord.ui.View()
-    view.add_item(discord.ui.Button(
+    log_view = discord.ui.View()
+    log_view.add_item(discord.ui.Button(
         label="Profil de l'auteur",
         url=f"https://discord.com/users/{member.id}",
         style=discord.ButtonStyle.link,
         emoji="🔗",
     ))
 
-    for ch_id in (RAID_LOG_ID, ALERT_ID):
-        ch = guild.get_channel(ch_id)
-        if ch:
-            try:
-                await ch.send(embed=e, view=view, allowed_mentions=discord.AllowedMentions.none())
-            except Exception:
-                traceback.print_exc()
+    log_ch = guild.get_channel(RAID_LOG_ID)
+    if log_ch:
+        try:
+            await log_ch.send(embed=log_embed, view=log_view, allowed_mentions=discord.AllowedMentions.none())
+        except Exception:
+            traceback.print_exc()
+
+    # ════════════════════════════════════════════════════════════
+    #  EMBED ALERTE (salon #alertes — stylé + ping + boutons)
+    # ════════════════════════════════════════════════════════════
+    alert_embed = discord.Embed(
+        title=f"🚨  ALERTE RAIDLOGS — {label}",
+        color=0xFF0000,
+        description=(
+            f"**Une activité suspecte a été détectée et neutralisée automatiquement.**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"**👤 Membre visé**\n"
+            f"{member.mention}  •  `{discord.utils.escape_markdown(str(member))}`\n"
+            f"`{member.id}`\n\n"
+            f"**📊 Activité détectée**\n"
+            f"{emoji}  **{label}**\n"
+            f"→ **{count} actions** en **{window_min} min** (limite : {limit})\n\n"
+            f"**🕐 Infos compte**\n"
+            f"Créé : {_ago(member.created_at)}  ·  Arrivé : {_ago(member.joined_at)}\n"
+            f"Rang le plus haut : **{rang}**\n\n"
+            f"**⚙️ Sanction automatique**\n"
+            f"{riposte}\n"
+            f"Rôles mis de côté : {roles_saved_fmt}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"*Utilisez les boutons ci-dessous pour gérer la suite.*"
+        ),
+    )
+    alert_embed.set_thumbnail(url=member.display_avatar.url)
+    alert_embed.set_author(
+        name="Système Raidlogs • Alerte automatique",
+        icon_url=guild.icon.url if guild.icon else discord.Embed.Empty,
+    )
+    alert_embed.set_footer(text=f"ID membre : {member.id}  •  Shotojo Surveillance")
+    alert_embed.timestamp = now()
+
+    alert_view = RaidAlertView(
+        member_id=member.id,
+        member_name=str(member),
+        saved_role_ids=_saved_roles.get(member.id, []),
+    )
+    # Lien profil en bouton non-interactif (URL)
+    alert_view.add_item(discord.ui.Button(
+        label="Voir le profil",
+        url=f"https://discord.com/users/{member.id}",
+        style=discord.ButtonStyle.link,
+        emoji="🔗",
+    ))
+
+    alert_ch = guild.get_channel(ALERT_ID)
+    if alert_ch:
+        try:
+            await alert_ch.send(
+                content=f"<@&{ALERT_ROLE_ID}>",
+                embed=alert_embed,
+                view=alert_view,
+                allowed_mentions=discord.AllowedMentions(roles=True),
+            )
+        except Exception:
+            traceback.print_exc()
+
 
 async def _check_raid(entry: discord.AuditLogEntry):
     try:
