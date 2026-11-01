@@ -233,7 +233,7 @@ def _add_event(store: dict, uid: int, window: int) -> int:
     return len(store[uid])
 
 # ────────────────────────────────────────────────────────────────
-#  VUE INTERACTIVE — boutons de l'alerte raidlogs
+#  VUE INTERACTIVE 🎛️ boutons de l'alerte raidlogs
 # ────────────────────────────────────────────────────────────────
 class RaidAlertView(discord.ui.View):
     """Boutons attachés à l'alerte dans #alertes."""
@@ -461,7 +461,7 @@ class RaidAlertView(discord.ui.View):
         log_ch = guild.get_channel(RAID_LOG_ID)
         if log_ch:
             log_e = discord.Embed(
-                title="🔓  Rôles réattribués — Raidlogs",
+                title="🔓 Rôles réattribués ✅ Raidlogs",
                 color=0x57F287,
                 description=(
                     f"{member.mention} (`{member.id}`) a retrouvé ses permissions.\n"
@@ -537,16 +537,16 @@ async def _sanction(
     )
 
     # ════════════════════════════════════════════════════════════
-    #  EMBED RAIDLOGS (salon #raidlogs — log discret)
+    #  EMBED RAIDLOGS (salon #raidlogs 🔒 log discret)
     # ════════════════════════════════════════════════════════════
     log_embed = discord.Embed(
         title=f"{emoji}  {label}",
         color=color,
         description=(
-            f"**Auteur** — {member.mention}  {discord.utils.escape_markdown(str(member))}\n"
-            f"`{member.id}`  ·  rang : {rang}\n"
-            f"compte créé {_ago(member.created_at)}  ·  arrivé {_ago(member.joined_at)}\n\n"
-            f"**Actions** — {count} en {window_min} minutes\n"
+            f"👤 **Auteur** : {member.mention}  {discord.utils.escape_markdown(str(member))}\n"
+            f"`{member.id}`  •  rang : {rang}\n"
+            f"compte créé {_ago(member.created_at)}  •  arrivé {_ago(member.joined_at)}\n\n"
+            f"⚡ **Actions** : {count} en {window_min} minutes\n"
             f"limite : {limit}\n\n"
             f"**Riposte**\n"
             f"{riposte}"
@@ -572,7 +572,7 @@ async def _sanction(
             traceback.print_exc()
 
     # ════════════════════════════════════════════════════════════
-    #  EMBED ALERTE (salon #alertes — stylé + ping + boutons)
+    #  EMBED ALERTE (salon #alertes 🚨 stylé + ping + boutons)
     # ════════════════════════════════════════════════════════════
     alert_embed = discord.Embed(
         title=f"🚨 ALERTE RAIDLOGS - {label}",
