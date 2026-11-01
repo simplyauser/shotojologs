@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 import discord
 
 # ════════════════════════════════════════════════════════════════
-#  CONFIG  (variables Railway : TOKEN, GUILD_ID, LOGS_CHANNEL_ID)
+#  CONFIG
 # ════════════════════════════════════════════════════════════════
 TOKEN     = os.environ["TOKEN"]
 GUILD_ID  = int(os.environ["GUILD_ID"])
@@ -18,6 +18,22 @@ LOG_SENT  = os.getenv("LOG_SENT_MESSAGES", "0") == "1"
 MSG_CACHE = int(os.getenv("MSG_CACHE", "10000"))
 
 GREEN, RED, ORANGE, BLUE, GREY = 0x57F287, 0xED4245, 0xFAA61A, 0x5865F2, 0x95A5A6
+
+# ════════════════════════════════════════════════════════════════
+#  RAID CONFIG
+# ════════════════════════════════════════════════════════════════
+RAID_LOG_ID   = 1566453272959778866
+ALERT_ID      = 1566453465129943181
+MUTED_ROLE_ID = 1560089046842216450
+
+MUTE_LIMIT = 4;  MUTE_WINDOW = 5  * 60   # 4 actions en 5 min
+DEAF_LIMIT = 4;  DEAF_WINDOW = 5  * 60   # 4 actions en 5 min
+DC_LIMIT   = 5;  DC_WINDOW   = 15 * 60   # 5 actions en 15 min
+
+_mute_track: dict[int, list[float]] = {}
+_deaf_track: dict[int, list[float]] = {}
+_dc_track:   dict[int, list[float]] = {}
+_sanctioned: set[int] = set()
 
 # ════════════════════════════════════════════════════════════════
 #  HELPERS
@@ -189,6 +205,144 @@ async def sender():
         await asyncio.sleep(0.4)
 
 # ════════════════════════════════════════════════════════════════
+#  RAID DETECTION
+# ════════════════════════════════════════════════════════════════
+def _ago(dt: datetime) -> str:
+    if dt is None:
+        return "inconnu"
+    delta = now() - dt
+    days  = delta.days
+    if days >= 365: return f"il y a {days // 365} an(s)"
+    if days >= 30:  return f"il y a {days // 30} mois"
+    if days >= 1:   return f"il y a {days} jour(s)"
+    h = int(delta.total_seconds() // 3600)
+    if h >= 1:      return f"il y a {h}h"
+    m = int(delta.total_seconds() // 60)
+    return f"il y a {m}min" if m > 0 else "à l'instant"
+
+def _add_event(store: dict, uid: int, window: int) -> int:
+    t = now().timestamp()
+    store.setdefault(uid, [])
+    store[uid].append(t)
+    store[uid] = [x for x in store[uid] if t - x <= window]
+    return len(store[uid])
+
+async def _sanction(
+    guild: discord.Guild,
+    member: discord.Member,
+    emoji: str,
+    label: str,
+    color: int,
+    count: int,
+    window_min: int,
+    limit: int,
+):
+    if member.id in _sanctioned:
+        return
+    _sanctioned.add(member.id)
+
+    # Rang le plus haut avant dérank
+    top = sorted(
+        [r for r in member.roles if r.id != guild.id],
+        key=lambda r: r.position,
+        reverse=True,
+    )
+    rang = top[0].name if top else "aucun"
+
+    muted_role = guild.get_role(MUTED_ROLE_ID)
+    to_remove  = [r for r in member.roles if r.id != guild.id and not r.managed]
+
+    derank_ok = mute_ok = False
+    try:
+        if to_remove:
+            await member.remove_roles(*to_remove, reason=f"[RAID] {label}")
+        derank_ok = True
+    except Exception:
+        traceback.print_exc()
+    try:
+        if muted_role:
+            await member.add_roles(muted_role, reason=f"[RAID] {label}")
+        mute_ok = True
+    except Exception:
+        traceback.print_exc()
+
+    if derank_ok and mute_ok:
+        riposte = "✅ Auteur dérank et mute"
+    else:
+        parts = (["✅ Dérank effectué"] if derank_ok else ["❌ Dérank échoué"]) + \
+                (["✅ Mute effectué"]   if mute_ok   else ["❌ Mute échoué"])
+        riposte = "\n".join(parts)
+
+    e = discord.Embed(
+        title=f"{emoji}  {label}",
+        color=color,
+        description=(
+            f"**Auteur** — {member.mention}  {discord.utils.escape_markdown(str(member))}\n"
+            f"`{member.id}`  ·  rang : {rang}\n"
+            f"compte créé {_ago(member.created_at)}  ·  arrivé {_ago(member.joined_at)}\n\n"
+            f"**Actions** — {count} en {window_min} minutes\n"
+            f"limite : {limit}\n\n"
+            f"**Riposte**\n"
+            f"{riposte}"
+        ),
+    )
+    e.set_thumbnail(url=member.display_avatar.url)
+    e.timestamp = now()
+
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(
+        label="Profil de l'auteur",
+        url=f"https://discord.com/users/{member.id}",
+        style=discord.ButtonStyle.link,
+        emoji="🔗",
+    ))
+
+    for ch_id in (RAID_LOG_ID, ALERT_ID):
+        ch = guild.get_channel(ch_id)
+        if ch:
+            try:
+                await ch.send(embed=e, view=view, allowed_mentions=discord.AllowedMentions.none())
+            except Exception:
+                traceback.print_exc()
+
+async def _check_raid(entry: discord.AuditLogEntry):
+    try:
+        guild  = entry.guild
+        user   = entry.user
+        if user is None or user.bot:
+            return
+        member = guild.get_member(user.id)
+        if member is None:
+            return
+
+        name = entry.action.name
+
+        if name == "member_update":
+            try:
+                b = dict(iter(entry.before))
+                a = dict(iter(entry.after))
+            except Exception:
+                return
+            # Mute serveur (clic droit → muter / démuter)
+            if "mute" in b or "mute" in a:
+                n = _add_event(_mute_track, user.id, MUTE_WINDOW)
+                if n >= MUTE_LIMIT:
+                    await _sanction(guild, member, "🔇", "Trop de mutes", BLUE, n, 5, MUTE_LIMIT)
+            # Sourd serveur / casque (clic droit → rendre sourd)
+            if "deaf" in b or "deaf" in a:
+                n = _add_event(_deaf_track, user.id, DEAF_WINDOW)
+                if n >= DEAF_LIMIT:
+                    await _sanction(guild, member, "🎧", "Trop de mutes casque", BLUE, n, 5, DEAF_LIMIT)
+
+        elif name == "member_disconnect":
+            n = _add_event(_dc_track, user.id, DC_WINDOW)
+            if n >= DC_LIMIT:
+                await _sanction(guild, member, "🔌", "Trop de déconnexions", ORANGE, n, 15, DC_LIMIT)
+
+    except Exception:
+        traceback.print_exc()
+
+# ════════════════════════════════════════════════════════════════
 #  CLIENT
 # ════════════════════════════════════════════════════════════════
 class LogClient(discord.Client):
@@ -199,7 +353,7 @@ client = LogClient(
     intents=discord.Intents.all(),
     max_messages=MSG_CACHE,
     status=discord.Status.online,
-    activity=discord.Activity(type=discord.ActivityType.watching, name="Shotojo \U0001F338 #\U0001F1EF\U0001F1F5 • Surveillance"),
+    activity=discord.Activity(type=discord.ActivityType.watching, name="Shotojo 🌸 #🇯🇵 • Surveillance"),
 )
 
 _started = False
@@ -544,6 +698,10 @@ def audit_color(entry):
 
 @client.event
 async def on_audit_log_entry_create(entry):
+    # Raid detection : tourne toujours, indépendamment du filtre SKIP_AUDIT
+    if entry.guild.id == GUILD_ID:
+        asyncio.create_task(_check_raid(entry))
+
     try:
         if entry.guild.id != GUILD_ID or entry.action in SKIP_AUDIT: return
         name = entry.action.name
