@@ -595,7 +595,7 @@ async def _sanction(
     alert_embed.set_thumbnail(url=member.display_avatar.url)
     alert_embed.set_author(
         name="Système Raidlogs - Alerte automatique",
-        icon_url=guild.icon.url if guild.icon else discord.Embed.Empty,
+        icon_url=guild.icon.url if guild.icon else None,
     )
     alert_embed.set_footer(text=f"ID membre : {member.id} - Shotojo Surveillance")
     alert_embed.timestamp = now()
@@ -679,6 +679,65 @@ client = LogClient(
 
 _started = False
 
+async def _send_startup(guild: discord.Guild):
+    """Envoie l'embed 'système en ligne' dans les 3 salons."""
+    footer = "Shotojo • Système de surveillance automatique"
+    manque = ""
+    if not guild.me.guild_permissions.view_audit_log:
+        manque = "\n\n⚠️ **Permission manquante** : *Voir les logs du serveur*."
+
+    embeds = {
+        LOGS_ID: discord.Embed(
+            title="🟢 Système de logs en ligne",
+            color=GREEN,
+            description=(
+                f">>> ✅ **Le bot de logs est opérationnel.**\n\n"
+                f"**🛡️ Serveur surveillé :** {guild.name}\n"
+                f"**📋 Suivi actif :**\n"
+                f"🗑️ Messages supprimés / modifiés\n"
+                f"👥 Arrivées / départs / profils\n"
+                f"🔨 Actions de modération et logs d'audit\n"
+                f"🛑 AutoMod{manque}"
+            ),
+        ),
+        RAID_LOG_ID: discord.Embed(
+            title="🟢 Raidlogs en ligne",
+            color=GREEN,
+            description=(
+                f">>> ✅ **Le journal Raidlogs est opérationnel.**\n\n"
+                f"**🛡️ Serveur surveillé :** {guild.name}\n"
+                f"**🔍 Seront archivés ici :**\n"
+                f"🔇🎧🔌 Sanctions automatiques\n"
+                f"✉️ Prises en charge\n"
+                f"🔨 Bannissements\n"
+                f"🔓 Réattributions de rôles"
+            ),
+        ),
+        ALERT_ID: discord.Embed(
+            title="🟢 Système de protection en ligne",
+            color=GREEN,
+            description=(
+                f">>> ✅ **Le système Raidlogs est opérationnel.**\n\n"
+                f"**🛡️ Serveur surveillé :** {guild.name}\n"
+                f"**🔍 Détection active :**\n"
+                f"🔇 Mutes abusifs : {MUTE_LIMIT} en {MUTE_WINDOW // 60} min\n"
+                f"🎧 Sourds abusifs : {DEAF_LIMIT} en {DEAF_WINDOW // 60} min\n"
+                f"🔌 Déconnexions abusives : {DC_LIMIT} en {DC_WINDOW // 60} min\n\n"
+                f"*Toute infraction déclenchera une alerte dans ce salon.*"
+            ),
+        ),
+    }
+
+    for cid, emb in embeds.items():
+        emb.set_footer(text=footer)
+        emb.timestamp = now()
+        try:
+            ch = guild.get_channel(cid) or await client.fetch_channel(cid)
+            await ch.send(embed=emb)
+        except Exception:
+            traceback.print_exc()
+
+
 @client.event
 async def on_ready():
     global _started
@@ -686,42 +745,11 @@ async def on_ready():
     if _started: return
     _started = True
     guild = client.get_guild(GUILD_ID)
-
-    # Embed logs
-    e = discord.Embed(title="✅ Bot de logs en ligne", color=GREEN)
     if guild:
-        e.description = f"Surveillance du serveur **{guild.name}** démarrée."
-        if not guild.me.guild_permissions.view_audit_log:
-            e.add_field(name="⚠️ Permission manquante",
-                value="Il me faut **Voir les logs du serveur** pour savoir qui fait les actions.", inline=False)
+        await _send_startup(guild)
     else:
-        e.color = RED
-        e.description = "⚠️ Le bot n'est pas dans le serveur configuré (GUILD_ID)."
-    emit(e)
-
-    # Embed alerte démarrage dans #alertes
-    if guild:
-        alert_ch = guild.get_channel(ALERT_ID)
-        if alert_ch:
-            try:
-                startup_embed = discord.Embed(
-                    title="🟢 Système de protection en ligne",
-                    color=0x57F287,
-                    description=(
-                        f">>> ✅ **Le système Raidlogs est opérationnel.**\n\n"
-                        f"**🛡️ Serveur surveillé :** {guild.name}\n"
-                        f"**🔍 Détection active :**\n"
-                        f"🔇 Mutes abusifs : {MUTE_LIMIT} en {MUTE_WINDOW // 60} min\n"
-                        f"🎧 Sourds abusifs : {DEAF_LIMIT} en {DEAF_WINDOW // 60} min\n"
-                        f"🔌 Déconnexions abusives : {DC_LIMIT} en {DC_WINDOW // 60} min\n\n"
-                        f"*Toute infraction déclenchera une alerte dans ce salon.*"
-                    ),
-                )
-                startup_embed.set_footer(text="Shotojo • Système de surveillance automatique")
-                startup_embed.timestamp = now()
-                await alert_ch.send(embed=startup_embed)
-            except Exception:
-                traceback.print_exc()
+        emit(discord.Embed(title="⚠️ Bot de logs", color=RED,
+             description="Le bot n'est pas dans le serveur configuré (GUILD_ID)."))
 
 # ════════════════════════════════════════════════════════════════
 #  MESSAGES : suppression
@@ -1028,6 +1056,45 @@ def audit_color(entry):
     if cat == discord.AuditLogActionCategory.update: return ORANGE
     return GREY
 
+# ── Fusion des changements de rôles (même exécutant + même cible) ──
+_role_buf: dict[tuple, dict] = {}
+
+def _dedupe(seq):
+    return list(dict.fromkeys(seq))
+
+def short_target(t):
+    if t is None: return "?"
+    return getattr(t, "mention", None) or f"`{t.id}`"
+
+async def _flush_roles(key):
+    await asyncio.sleep(2)          # fenêtre de regroupement
+    d = _role_buf.pop(key, None)
+    if not d: return
+    lines = [f"{who(d['user'])} ➜ {d['target']}"]
+    if d["add"]: lines.append("➕ " + ", ".join(_dedupe(d["add"])))
+    if d["rem"]: lines.append("➖ " + ", ".join(_dedupe(d["rem"])))
+    if d["reason"]: lines.append(f"📝 {trunc(d['reason'], 300)}")
+    e = discord.Embed(title="🎭 Rôles modifiés", color=ORANGE,
+                      description="\n".join(lines), timestamp=d["ts"])
+    e.set_footer(text=f"Audit ID {d['id']}")
+    emit(e)
+
+def _handle_roles(entry):
+    key = (entry.user_id, getattr(entry.target, "id", None))
+    d = _role_buf.get(key)
+    if d is None:
+        d = _role_buf[key] = {
+            "user": entry.user, "target": short_target(entry.target),
+            "add": [], "rem": [], "reason": entry.reason,
+            "ts": entry.created_at, "id": entry.id,
+        }
+        asyncio.create_task(_flush_roles(key))
+    try:
+        d["rem"] += [role_mention(r) for r in (getattr(entry.before, "roles", None) or [])]
+        d["add"] += [role_mention(r) for r in (getattr(entry.after, "roles", None) or [])]
+    except Exception:
+        traceback.print_exc()
+
 @client.event
 async def on_audit_log_entry_create(entry):
     # Raid detection : tourne toujours, indépendamment du filtre SKIP_AUDIT
@@ -1037,17 +1104,29 @@ async def on_audit_log_entry_create(entry):
     try:
         if entry.guild.id != GUILD_ID or entry.action in SKIP_AUDIT: return
         name = entry.action.name
+
+        # Rôles : un seul log regroupé
+        if name == "member_role_update":
+            _handle_roles(entry)
+            return
+
         label_data = LABELS.get(name, ("📋", name.replace("_", " ").capitalize()))
         emoji, label = (label_data[0], label_data[1]) if label_data[1] else ("📋", label_data[0])
-        e = discord.Embed(title=f"{emoji} {label}", color=audit_color(entry), timestamp=entry.created_at)
-        e.add_field(name="👤 Executant", value=who(entry.user) if entry.user else f"`{entry.user_id}`", inline=True)
-        target = fmt_target(entry.target)
-        if target: e.add_field(name="Cible", value=target, inline=True)
-        if entry.reason: e.add_field(name="📝 Raison", value=trunc(entry.reason, 500), inline=False)
+
+        # Format compact : tout dans la description
+        head = who(entry.user) if entry.user else f"`{entry.user_id}`"
+        tgt = short_target(entry.target) if entry.target is not None else None
+        lines = [f"{head} ➜ {tgt}" if tgt else head]
+        if entry.reason:
+            lines.append(f"📝 {trunc(entry.reason, 300)}")
         extra = fmt_extra(entry.extra)
-        if extra: e.add_field(name="Details", value=extra, inline=False)
-        for i, chunk in enumerate(changes_chunks(entry)):
-            e.add_field(name="Changements" if i == 0 else "(suite)", value=chunk, inline=False)
+        if extra:
+            lines.append(trunc(extra.replace("\n", " • "), 300))
+        lines += [c.strip() for c in changes_chunks(entry)]
+
+        e = discord.Embed(title=f"{emoji} {label}", color=audit_color(entry),
+                          description=trunc("\n".join(lines), 3500),
+                          timestamp=entry.created_at)
         e.set_footer(text=f"Audit ID {entry.id}")
         emit(e)
     except Exception:
