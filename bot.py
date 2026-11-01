@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 
 import discord
 
-# --- config de base ---
+# config de base du bot
 TOKEN    = os.environ["TOKEN"]
 GUILD_ID = int(os.environ["GUILD_ID"])
 LOGS_ID  = int(os.environ["LOGS_CHANNEL_ID"])
@@ -21,7 +21,7 @@ ORANGE = 0xFAA61A
 BLUE   = 0x5865F2
 GREY   = 0x95A5A6
 
-# --- salons & rôles raidlogs ---
+# salons & rôles raidlogs 
 RAID_LOG_ID   = 1566453272959778866
 ALERT_ID      = 1566453465129943181
 MUTED_ROLE_ID = 1560089046842216450
@@ -41,7 +41,7 @@ _sanctioned: set[int] = set()
 _saved_roles: dict[int, list[int]] = {}   # rôles avant dérank
 
 
-# ---- petits utilitaires ----
+# utilitaires
 
 def now():
     return datetime.now(timezone.utc)
@@ -179,7 +179,7 @@ def changes_chunks(entry):
     return chunks[:4]
 
 
-# ---- file d'envoi des embeds ----
+# envoie des embeds 
 
 queue: asyncio.Queue = asyncio.Queue()
 
@@ -221,7 +221,7 @@ async def sender():
         await asyncio.sleep(0.4)
 
 
-# ---- raidlogs ----
+# raidlogs
 
 def _ago(dt: datetime) -> str:
     if dt is None:
@@ -426,7 +426,7 @@ class RaidAlertView(discord.ui.View):
         except Exception:
             traceback.print_exc()
 
-        # on remet le membre sous surveillance (reset des compteurs)
+        # on remet le membre sous surveillance
         _sanctioned.discard(self.member_id)
         _mute_track.pop(self.member_id, None)
         _deaf_track.pop(self.member_id, None)
@@ -533,7 +533,7 @@ async def _sanction(guild, member, emoji, label, color, count, window_min, limit
         except Exception:
             traceback.print_exc()
 
-    # alerte stylée dans #alertes avec ping + boutons
+    # alerte dans #alertes avec ping + boutons
     alert_embed = discord.Embed(
         title=f"🚨 ALERTE RAIDLOGS - {label}",
         color=0xFF0000,
@@ -621,7 +621,7 @@ async def _check_raid(entry: discord.AuditLogEntry):
         traceback.print_exc()
 
 
-# ---- client discord ----
+# client discord
 
 class LogClient(discord.Client):
     async def setup_hook(self):
@@ -710,7 +710,7 @@ async def on_ready():
              description="Le bot n'est pas dans le serveur configuré (GUILD_ID)."))
 
 
-# ---- messages ----
+# messages
 
 async def find_deleter(guild, author_id, channel_id):
     try:
@@ -942,7 +942,7 @@ async def on_member_update(before, after):
         ))
 
 
-# ---- automod ----
+# automod
 
 @client.event
 async def on_automod_action(execution):
@@ -964,7 +964,7 @@ async def on_automod_action(execution):
         traceback.print_exc()
 
 
-# ---- logs d'audit ----
+# logs d'audit
 
 LABELS = {
     "guild_update":       ("⚙️",  "Serveur modifie"),
@@ -1014,7 +1014,7 @@ RED_ACTIONS   = {"kick", "ban", "member_prune", "member_disconnect",
                  "automod_block_message", "automod_timeout_member"}
 GREEN_ACTIONS = {"unban", "bot_add"}
 
-# actions trop fréquentes ou peu utiles → on skip le log
+# actions trop fréquentes ou peu utiles qu'on skip car blc
 SKIP_AUDIT = {
     discord.AuditLogAction.message_delete,
     discord.AuditLogAction.message_bulk_delete,
@@ -1044,7 +1044,7 @@ def audit_color(entry):
     if cat == discord.AuditLogActionCategory.update: return ORANGE
     return GREY
 
-# regroupement des changements de rôles (évite le spam si plusieurs rôles d'un coup)
+# regroupement des changements de rôles
 _role_buf: dict[tuple, dict] = {}
 
 def _dedupe(seq):
@@ -1086,7 +1086,7 @@ def _handle_roles(entry):
 
 @client.event
 async def on_audit_log_entry_create(entry):
-    # la détection raid tourne toujours, même pour les actions qu'on skip en log
+    # la détection raid tourne toujours même pour les actions qu'on skip en log
     if entry.guild.id == GUILD_ID:
         asyncio.create_task(_check_raid(entry))
 
