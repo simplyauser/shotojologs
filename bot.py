@@ -8,47 +8,47 @@ from datetime import datetime, timezone, timedelta
 
 import discord
 
-# ════════════════════════════════════════════════════════════════
-#  CONFIG
-# ════════════════════════════════════════════════════════════════
-TOKEN     = os.environ["TOKEN"]
-GUILD_ID  = int(os.environ["GUILD_ID"])
-LOGS_ID   = int(os.environ["LOGS_CHANNEL_ID"])
-LOG_SENT  = os.getenv("LOG_SENT_MESSAGES", "0") == "1"
+# --- config de base ---
+TOKEN    = os.environ["TOKEN"]
+GUILD_ID = int(os.environ["GUILD_ID"])
+LOGS_ID  = int(os.environ["LOGS_CHANNEL_ID"])
+LOG_SENT = os.getenv("LOG_SENT_MESSAGES", "0") == "1"
 MSG_CACHE = int(os.getenv("MSG_CACHE", "10000"))
 
-GREEN, RED, ORANGE, BLUE, GREY = 0x57F287, 0xED4245, 0xFAA61A, 0x5865F2, 0x95A5A6
+GREEN  = 0x57F287
+RED    = 0xED4245
+ORANGE = 0xFAA61A
+BLUE   = 0x5865F2
+GREY   = 0x95A5A6
 
-# ════════════════════════════════════════════════════════════════
-#  RAID CONFIG
-# ════════════════════════════════════════════════════════════════
-RAID_LOG_ID      = 1566453272959778866
-ALERT_ID         = 1566453465129943181
-MUTED_ROLE_ID    = 1560089046842216450
-ALERT_ROLE_ID    = 1566238799002992640   # rôle pingé dans #alertes
-FONDATEUR_ID     = 1419320803199029402   # mention dans les messages de ban / DM
-FONDATION_ID     = 1558327588710121554   # contact fondation pour l'avertissement
+# --- salons & rôles raidlogs ---
+RAID_LOG_ID   = 1566453272959778866
+ALERT_ID      = 1566453465129943181
+MUTED_ROLE_ID = 1560089046842216450
+ALERT_ROLE_ID = 1566238799002992640
+FONDATEUR_ID  = 1419320803199029402
+FONDATION_ID  = 1558327588710121554
 
-MUTE_LIMIT = 4;  MUTE_WINDOW = 5  * 60   # 4 actions en 5 min
-DEAF_LIMIT = 4;  DEAF_WINDOW = 5  * 60   # 4 actions en 5 min
-DC_LIMIT   = 4;  DC_WINDOW   = 5  * 60   # 4 actions en 5 min
+# seuils de détection
+MUTE_LIMIT = 4; MUTE_WINDOW = 5 * 60
+DEAF_LIMIT = 4; DEAF_WINDOW = 5 * 60
+DC_LIMIT   = 4; DC_WINDOW   = 5 * 60
 
-_mute_track:  dict[int, list[float]] = {}
-_deaf_track:  dict[int, list[float]] = {}
-_dc_track:    dict[int, list[float]] = {}
-_sanctioned:  set[int] = set()
-# Sauvegarde des rôles avant dérank  { member_id: [role_id, ...] }
-_saved_roles: dict[int, list[int]]  = {}
+_mute_track: dict[int, list[float]] = {}
+_deaf_track: dict[int, list[float]] = {}
+_dc_track:   dict[int, list[float]] = {}
+_sanctioned: set[int] = set()
+_saved_roles: dict[int, list[int]] = {}   # rôles avant dérank
 
-# ════════════════════════════════════════════════════════════════
-#  HELPERS
-# ════════════════════════════════════════════════════════════════
+
+# ---- petits utilitaires ----
+
 def now():
     return datetime.now(timezone.utc)
 
 def trunc(s, n=1000):
     s = "" if s is None else str(s)
-    return s if len(s) <= n else s[: n - 1] + "..."
+    return s if len(s) <= n else s[:n-1] + "..."
 
 def ts(dt):
     t = int(dt.timestamp())
@@ -59,11 +59,11 @@ def who(u):
         return "Inconnu"
     if isinstance(u, discord.Object):
         return f"`{u.id}`"
-    bot = " 🤖 **BOT**" if getattr(u, "bot", False) else ""
-    return f"{u.mention} (`{u}` `{u.id}`){bot}"
+    bot_tag = " 🤖 **BOT**" if getattr(u, "bot", False) else ""
+    return f"{u.mention} (`{u}` `{u.id}`){bot_tag}"
 
-def link(channel_id, message_id):
-    return f"https://discord.com/channels/{GUILD_ID}/{channel_id}/{message_id}"
+def link(chan_id, msg_id):
+    return f"https://discord.com/channels/{GUILD_ID}/{chan_id}/{msg_id}"
 
 def role_mention(r):
     return f"<@&{r.id}>"
@@ -77,17 +77,19 @@ def fmt_simple(v):
     if isinstance(v, timedelta): return f"`{int(v.total_seconds())}s`"
     if isinstance(v, enum.Enum): return f"`{v.name}`"
     if isinstance(v, discord.Object): return f"`{v.id}`"
-    if isinstance(v, (list, tuple, set)): return ", ".join(fmt_simple(x) for x in v) or "vide"
+    if isinstance(v, (list, tuple, set)):
+        return ", ".join(fmt_simple(x) for x in v) or "vide"
     if hasattr(v, "mention"): return v.mention
-    return f"`{trunc(v, 150)}`" if str(v) != "" else "vide"
+    s = str(v)
+    return f"`{trunc(s, 150)}`" if s else "vide"
 
 def fmt_target(t):
     if t is None: return None
     if isinstance(t, discord.Object): return f"ID `{t.id}`"
     if isinstance(t, discord.Invite): return t.url
     mention = getattr(t, "mention", None)
-    name = getattr(t, "name", None)
-    tid = getattr(t, "id", None)
+    name    = getattr(t, "name", None)
+    tid     = getattr(t, "id", None)
     parts = []
     if mention: parts.append(mention)
     if name and str(name) not in (mention or ""): parts.append(f"`{name}`")
@@ -98,9 +100,11 @@ def fmt_extra(extra):
     if extra is None: return None
     if hasattr(extra, "mention"): return extra.mention
     try:
-        items = [f"**{k}** : {fmt_simple(v)}" for k, v in vars(extra).items() if v is not None and not k.startswith("_")]
+        items = [f"**{k}** : {fmt_simple(v)}" for k, v in vars(extra).items()
+                 if v is not None and not k.startswith("_")]
         if items: return trunc("\n".join(items), 500)
-    except Exception: pass
+    except Exception:
+        pass
     return trunc(extra, 300)
 
 def perm_set(p):
@@ -133,7 +137,11 @@ def overwrites_diff(bv, av):
         ta, oa = ad.get(tid, (None, None))
         target = ta or tb
         sb, sa = ow_states(ob), ow_states(oa)
-        diffs = [f"`{n}` {SYM[sb.get(n)]}➜{SYM[sa.get(n)]}" for n in sorted(set(sb) | set(sa)) if sb.get(n) != sa.get(n)]
+        diffs = [
+            f"`{n}` {SYM[sb.get(n)]}➜{SYM[sa.get(n)]}"
+            for n in sorted(set(sb) | set(sa))
+            if sb.get(n) != sa.get(n)
+        ]
         if diffs:
             lines.append(f"{ow_target(target)} : " + ", ".join(diffs))
     return "\n".join(lines)
@@ -170,9 +178,9 @@ def changes_chunks(entry):
     if cur: chunks.append(cur)
     return chunks[:4]
 
-# ════════════════════════════════════════════════════════════════
-#  ENVOI DES LOGS
-# ════════════════════════════════════════════════════════════════
+
+# ---- file d'envoi des embeds ----
+
 queue: asyncio.Queue = asyncio.Queue()
 
 def emit(embed, file=None):
@@ -186,6 +194,7 @@ async def sender():
         embed, file = pending or await queue.get()
         pending = None
         embeds, size = [embed], len(embed)
+        # on regroupe jusqu'à 10 embeds par message si pas de fichier joint
         if file is None:
             while len(embeds) < 10:
                 try:
@@ -201,17 +210,19 @@ async def sender():
             try:
                 if channel is None:
                     channel = client.get_channel(LOGS_ID) or await client.fetch_channel(LOGS_ID)
-                await channel.send(embeds=embeds, file=file, allowed_mentions=discord.AllowedMentions.none())
+                await channel.send(embeds=embeds, file=file,
+                                   allowed_mentions=discord.AllowedMentions.none())
                 break
             except Exception:
                 traceback.print_exc()
-                if file is not None: file = None
+                if file is not None:
+                    file = None
                 await asyncio.sleep(3)
         await asyncio.sleep(0.4)
 
-# ════════════════════════════════════════════════════════════════
-#  RAID DETECTION
-# ════════════════════════════════════════════════════════════════
+
+# ---- raidlogs ----
+
 def _ago(dt: datetime) -> str:
     if dt is None:
         return "inconnu"
@@ -232,25 +243,18 @@ def _add_event(store: dict, uid: int, window: int) -> int:
     store[uid] = [x for x in store[uid] if t - x <= window]
     return len(store[uid])
 
-# ────────────────────────────────────────────────────────────────
-#  VUE INTERACTIVE 🎛️ boutons de l'alerte raidlogs
-# ────────────────────────────────────────────────────────────────
+
 class RaidAlertView(discord.ui.View):
-    """Boutons attachés à l'alerte dans #alertes."""
+    """Boutons de l'alerte dans #alertes."""
 
     def __init__(self, member_id: int, member_name: str, saved_role_ids: list[int]):
-        super().__init__(timeout=None)   # persistant jusqu'au redémarrage
+        super().__init__(timeout=None)
         self.member_id      = member_id
         self.member_name    = member_name
         self.saved_role_ids = saved_role_ids
 
-    # ── Bouton 1 : Prendre en charge ────────────────────────────
-    @discord.ui.button(
-        label="Prendre en charge",
-        style=discord.ButtonStyle.primary,
-        emoji="✉️",
-        custom_id="raid_dm",
-    )
+    @discord.ui.button(label="Prendre en charge", style=discord.ButtonStyle.primary,
+                       emoji="✉️", custom_id="raid_dm")
     async def btn_dm(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         guild  = interaction.guild
@@ -260,7 +264,7 @@ class RaidAlertView(discord.ui.View):
             await interaction.followup.send("❌ Impossible de trouver ce membre sur le serveur.", ephemeral=True)
             return
 
-        handler = interaction.user  # la personne qui a cliqué
+        handler = interaction.user
 
         try:
             dm_embed = discord.Embed(
@@ -284,7 +288,6 @@ class RaidAlertView(discord.ui.View):
                 ephemeral=True,
             )
 
-            # Log dans #raidlogs
             log_ch = guild.get_channel(RAID_LOG_ID)
             if log_ch:
                 log_e = discord.Embed(
@@ -300,18 +303,14 @@ class RaidAlertView(discord.ui.View):
                 await log_ch.send(embed=log_e)
 
         except discord.Forbidden:
-            await interaction.followup.send("❌ Impossible d'envoyer un DM à cet utilisateur (DMs fermés ou bloqués).", ephemeral=True)
+            await interaction.followup.send(
+                "❌ Impossible d'envoyer un DM à cet utilisateur (DMs fermés ou bloqués).", ephemeral=True)
         except Exception:
             traceback.print_exc()
             await interaction.followup.send("❌ Une erreur est survenue.", ephemeral=True)
 
-    # ── Bouton 2 : Bannir ───────────────────────────────────────
-    @discord.ui.button(
-        label="Bannir l'utilisateur",
-        style=discord.ButtonStyle.danger,
-        emoji="🔨",
-        custom_id="raid_ban",
-    )
+    @discord.ui.button(label="Bannir l'utilisateur", style=discord.ButtonStyle.danger,
+                       emoji="🔨", custom_id="raid_ban")
     async def btn_ban(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
@@ -319,38 +318,33 @@ class RaidAlertView(discord.ui.View):
             await interaction.followup.send("❌ Serveur introuvable.", ephemeral=True)
             return
 
-        ban_reason = "Raidlogs, bannissement immédiat décidé par un Fondateur."
+        ban_reason  = "Raidlogs, bannissement immédiat décidé par un Fondateur."
         ban_dm_text = (
             f"Tu as été banni(e) de **Shotojo 🌸 #🇯🇵** pour la raison suivante : "
             f"`Raidlogs, bannissement immédiat décidé par un Fondateur`.\n\n"
             f"Si tu veux demander pardon viens ici : https://discord.gg/rAjayCuyyu"
         )
         try:
-            # Envoyer le DM AVANT le ban (après le ban on ne peut plus DM)
             member = guild.get_member(self.member_id)
             if member:
                 try:
                     await member.send(ban_dm_text)
                 except discord.Forbidden:
-                    pass  # DMs fermés, on ban quand même
+                    pass
                 except Exception:
                     traceback.print_exc()
 
-            await guild.ban(
-                discord.Object(id=self.member_id),
-                reason=ban_reason,
-                delete_message_days=0,
-            )
+            await guild.ban(discord.Object(id=self.member_id),
+                            reason=ban_reason, delete_message_days=0)
             await interaction.followup.send(
-                f"✅ **{discord.utils.escape_markdown(self.member_name)}** (`{self.member_id}`) a été banni et notifié en MP.",
+                f"✅ **{discord.utils.escape_markdown(self.member_name)}** (`{self.member_id}`) "
+                f"a été banni et notifié en MP.",
                 ephemeral=True,
             )
 
-            # Nettoyage mémoire
             _sanctioned.discard(self.member_id)
             _saved_roles.pop(self.member_id, None)
 
-            # Log dans #raidlogs
             log_ch = guild.get_channel(RAID_LOG_ID)
             if log_ch:
                 log_e = discord.Embed(
@@ -365,7 +359,6 @@ class RaidAlertView(discord.ui.View):
                 log_e.timestamp = now()
                 await log_ch.send(embed=log_e)
 
-            # Désactiver les boutons du message d'alerte
             for item in self.children:
                 item.disabled = True
             try:
@@ -374,18 +367,14 @@ class RaidAlertView(discord.ui.View):
                 pass
 
         except discord.Forbidden:
-            await interaction.followup.send("❌ Je n'ai pas la permission de bannir cet utilisateur.", ephemeral=True)
+            await interaction.followup.send(
+                "❌ Je n'ai pas la permission de bannir cet utilisateur.", ephemeral=True)
         except Exception:
             traceback.print_exc()
             await interaction.followup.send("❌ Une erreur est survenue lors du bannissement.", ephemeral=True)
 
-    # ── Bouton 3 : Réattribuer les rôles ────────────────────────
-    @discord.ui.button(
-        label="Réattribuer les rôles",
-        style=discord.ButtonStyle.success,
-        emoji="🔓",
-        custom_id="raid_restore",
-    )
+    @discord.ui.button(label="Réattribuer les rôles", style=discord.ButtonStyle.success,
+                       emoji="🔓", custom_id="raid_restore")
     async def btn_restore(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         guild  = interaction.guild
@@ -396,19 +385,17 @@ class RaidAlertView(discord.ui.View):
             return
 
         muted_role = guild.get_role(MUTED_ROLE_ID)
-        saved      = self.saved_role_ids or []
+        saved = self.saved_role_ids or []
 
-        # Retirer le rôle muet
         try:
             if muted_role and muted_role in member.roles:
                 await member.remove_roles(muted_role, reason="[RAID] Réattribution manuelle des rôles")
         except Exception:
             traceback.print_exc()
 
-        # Remettre les rôles sauvegardés
-        roles_to_add = [guild.get_role(rid) for rid in saved if guild.get_role(rid) is not None]
+        roles_to_add = [guild.get_role(rid) for rid in saved if guild.get_role(rid)]
         roles_to_add = [r for r in roles_to_add if not r.managed and r.id != guild.id]
-        restored_ok  = False
+        restored_ok = False
         try:
             if roles_to_add:
                 await member.add_roles(*roles_to_add, reason="[RAID] Réattribution manuelle des rôles")
@@ -416,7 +403,6 @@ class RaidAlertView(discord.ui.View):
         except Exception:
             traceback.print_exc()
 
-        # DM d'avertissement stylé
         try:
             warn_embed = discord.Embed(
                 title="⚠️ Avertissement officiel - Shotojo",
@@ -436,17 +422,15 @@ class RaidAlertView(discord.ui.View):
             warn_embed.timestamp = now()
             await member.send(embed=warn_embed)
         except discord.Forbidden:
-            pass  # DMs fermés, on continue quand même
+            pass
         except Exception:
             traceback.print_exc()
 
-        # Remettre sous surveillance : retirer de _sanctioned ET reset les timers
+        # on remet le membre sous surveillance (reset des compteurs)
         _sanctioned.discard(self.member_id)
         _mute_track.pop(self.member_id, None)
         _deaf_track.pop(self.member_id, None)
         _dc_track.pop(self.member_id, None)
-        # Conserver les rôles sauvegardés pour un éventuel nouvel incident
-        # (ils seront réécrasés par _sanction si ça recommence)
 
         roles_list = ", ".join(r.mention for r in roles_to_add) if roles_to_add else "aucun rôle à restaurer"
         await interaction.followup.send(
@@ -455,7 +439,6 @@ class RaidAlertView(discord.ui.View):
             ephemeral=True,
         )
 
-        # Log dans #raidlogs
         log_ch = guild.get_channel(RAID_LOG_ID)
         if log_ch:
             log_e = discord.Embed(
@@ -471,7 +454,6 @@ class RaidAlertView(discord.ui.View):
             log_e.timestamp = now()
             await log_ch.send(embed=log_e)
 
-        # Désactiver les boutons du message d'alerte
         for item in self.children:
             item.disabled = True
         try:
@@ -480,32 +462,18 @@ class RaidAlertView(discord.ui.View):
             pass
 
 
-async def _sanction(
-    guild: discord.Guild,
-    member: discord.Member,
-    emoji: str,
-    label: str,
-    color: int,
-    count: int,
-    window_min: int,
-    limit: int,
-):
+async def _sanction(guild, member, emoji, label, color, count, window_min, limit):
     if member.id in _sanctioned:
         return
     _sanctioned.add(member.id)
 
-    # Rang le plus haut avant dérank
-    top = sorted(
-        [r for r in member.roles if r.id != guild.id],
-        key=lambda r: r.position,
-        reverse=True,
-    )
+    top = sorted([r for r in member.roles if r.id != guild.id],
+                 key=lambda r: r.position, reverse=True)
     rang = top[0].name if top else "aucun"
 
     muted_role = guild.get_role(MUTED_ROLE_ID)
     to_remove  = [r for r in member.roles if r.id != guild.id and not r.managed]
 
-    # ── Sauvegarder les rôles pour la réattribution future ──────
     _saved_roles[member.id] = [r.id for r in to_remove]
 
     derank_ok = mute_ok = False
@@ -529,14 +497,9 @@ async def _sanction(
                 (["✅ Mute effectué"]   if mute_ok   else ["❌ Mute échoué"])
         riposte = "\n".join(parts)
 
-    roles_saved_fmt = (
-        ", ".join(f"<@&{rid}>" for rid in _saved_roles.get(member.id, []))
-        or "aucun"
-    )
+    roles_saved_fmt = ", ".join(f"<@&{rid}>" for rid in _saved_roles.get(member.id, [])) or "aucun"
 
-    # ════════════════════════════════════════════════════════════
-    #  EMBED RAIDLOGS (salon #raidlogs 🔒 log discret)
-    # ════════════════════════════════════════════════════════════
+    # log discret dans #raidlogs
     log_embed = discord.Embed(
         title=f"{emoji}  {label}",
         color=color,
@@ -565,13 +528,12 @@ async def _sanction(
     log_ch = guild.get_channel(RAID_LOG_ID)
     if log_ch:
         try:
-            await log_ch.send(embed=log_embed, view=log_view, allowed_mentions=discord.AllowedMentions.none())
+            await log_ch.send(embed=log_embed, view=log_view,
+                              allowed_mentions=discord.AllowedMentions.none())
         except Exception:
             traceback.print_exc()
 
-    # ════════════════════════════════════════════════════════════
-    #  EMBED ALERTE (salon #alertes 🚨 stylé + ping + boutons)
-    # ════════════════════════════════════════════════════════════
+    # alerte stylée dans #alertes avec ping + boutons
     alert_embed = discord.Embed(
         title=f"🚨 ALERTE RAIDLOGS - {label}",
         color=0xFF0000,
@@ -593,10 +555,8 @@ async def _sanction(
         ),
     )
     alert_embed.set_thumbnail(url=member.display_avatar.url)
-    alert_embed.set_author(
-        name="Système Raidlogs - Alerte automatique",
-        icon_url=guild.icon.url if guild.icon else None,
-    )
+    alert_embed.set_author(name="Système Raidlogs - Alerte automatique",
+                           icon_url=guild.icon.url if guild.icon else None)
     alert_embed.set_footer(text=f"ID membre : {member.id} - Shotojo Surveillance")
     alert_embed.timestamp = now()
 
@@ -605,7 +565,6 @@ async def _sanction(
         member_name=str(member),
         saved_role_ids=_saved_roles.get(member.id, []),
     )
-    # Lien profil en bouton non-interactif (URL)
     alert_view.add_item(discord.ui.Button(
         label="Voir le profil",
         url=f"https://discord.com/users/{member.id}",
@@ -644,12 +603,10 @@ async def _check_raid(entry: discord.AuditLogEntry):
                 a = dict(iter(entry.after))
             except Exception:
                 return
-            # Mute serveur (clic droit → muter / démuter)
             if "mute" in b or "mute" in a:
                 n = _add_event(_mute_track, user.id, MUTE_WINDOW)
                 if n >= MUTE_LIMIT:
                     await _sanction(guild, member, "🔇", "Trop de mutes", BLUE, n, 5, MUTE_LIMIT)
-            # Sourd serveur / casque (clic droit → rendre sourd)
             if "deaf" in b or "deaf" in a:
                 n = _add_event(_deaf_track, user.id, DEAF_WINDOW)
                 if n >= DEAF_LIMIT:
@@ -663,9 +620,9 @@ async def _check_raid(entry: discord.AuditLogEntry):
     except Exception:
         traceback.print_exc()
 
-# ════════════════════════════════════════════════════════════════
-#  CLIENT
-# ════════════════════════════════════════════════════════════════
+
+# ---- client discord ----
+
 class LogClient(discord.Client):
     async def setup_hook(self):
         asyncio.create_task(sender())
@@ -679,8 +636,8 @@ client = LogClient(
 
 _started = False
 
+
 async def _send_startup(guild: discord.Guild):
-    """Envoie l'embed 'système en ligne' dans les 3 salons."""
     footer = "Shotojo • Système de surveillance automatique"
     manque = ""
     if not guild.me.guild_permissions.view_audit_log:
@@ -742,7 +699,8 @@ async def _send_startup(guild: discord.Guild):
 async def on_ready():
     global _started
     print(f"✅ {client.user} connecté (ID: {client.user.id})")
-    if _started: return
+    if _started:
+        return
     _started = True
     guild = client.get_guild(GUILD_ID)
     if guild:
@@ -751,13 +709,14 @@ async def on_ready():
         emit(discord.Embed(title="⚠️ Bot de logs", color=RED,
              description="Le bot n'est pas dans le serveur configuré (GUILD_ID)."))
 
-# ════════════════════════════════════════════════════════════════
-#  MESSAGES : suppression
-# ════════════════════════════════════════════════════════════════
+
+# ---- messages ----
+
 async def find_deleter(guild, author_id, channel_id):
     try:
         async for en in guild.audit_logs(limit=10, action=discord.AuditLogAction.message_delete):
-            if (now() - en.created_at).total_seconds() > 15: break
+            if (now() - en.created_at).total_seconds() > 15:
+                break
             ch = getattr(en.extra, "channel", None)
             if en.target is not None and en.target.id == author_id and getattr(ch, "id", None) == channel_id:
                 return en.user
@@ -775,28 +734,31 @@ def deleter_text(d):
 def msg_details(e, msg):
     if msg.attachments:
         e.add_field(name="📎 Pieces jointes",
-            value=trunc("\n".join(f"[{a.filename}]({a.url})" for a in msg.attachments), 1000), inline=False)
+            value=trunc("\n".join(f"[{a.filename}]({a.url})" for a in msg.attachments), 1000),
+            inline=False)
     if msg.stickers:
         e.add_field(name="Stickers", value=", ".join(s.name for s in msg.stickers), inline=False)
     if msg.embeds:
         e.add_field(name="Embeds", value=f"{len(msg.embeds)} embed(s)", inline=True)
     if msg.reference and msg.reference.message_id:
-        e.add_field(name="En reponse a", value=f"[message]({link(msg.reference.channel_id, msg.reference.message_id)})", inline=True)
+        e.add_field(name="En reponse a",
+            value=f"[message]({link(msg.reference.channel_id, msg.reference.message_id)})",
+            inline=True)
 
 async def handle_delete(payload):
     try:
-        msg = payload.cached_message
+        msg   = payload.cached_message
         guild = client.get_guild(GUILD_ID)
         e = discord.Embed(title="🗑️ Message supprime", color=RED)
         e.add_field(name="📍 Salon", value=f"<#{payload.channel_id}>", inline=True)
         if msg:
             await asyncio.sleep(1.5)
             deleter = await find_deleter(guild, msg.author.id, payload.channel_id) if guild else None
-            e.add_field(name="✍️ Auteur", value=who(msg.author), inline=True)
-            e.add_field(name="🗑️ Supprime par", value=deleter_text(deleter), inline=False)
-            e.add_field(name="📅 Envoye", value=ts(msg.created_at), inline=True)
-            e.add_field(name="🆔 Message", value=f"`{msg.id}`", inline=True)
-            e.add_field(name="💬 Contenu", value=trunc(msg.content, 1000) or "(aucun texte)", inline=False)
+            e.add_field(name="✍️ Auteur",      value=who(msg.author),         inline=True)
+            e.add_field(name="🗑️ Supprime par", value=deleter_text(deleter),   inline=False)
+            e.add_field(name="📅 Envoye",       value=ts(msg.created_at),      inline=True)
+            e.add_field(name="🆔 Message",       value=f"`{msg.id}`",           inline=True)
+            e.add_field(name="💬 Contenu",       value=trunc(msg.content, 1000) or "(aucun texte)", inline=False)
             msg_details(e, msg)
             e.set_thumbnail(url=msg.author.display_avatar.url)
         else:
@@ -808,7 +770,8 @@ async def handle_delete(payload):
 
 @client.event
 async def on_raw_message_delete(payload):
-    if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID: return
+    if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID:
+        return
     asyncio.create_task(handle_delete(payload))
 
 async def handle_bulk(payload):
@@ -818,17 +781,21 @@ async def handle_bulk(payload):
         deleter = None
         try:
             async for en in guild.audit_logs(limit=5, action=discord.AuditLogAction.message_bulk_delete):
-                if (now() - en.created_at).total_seconds() > 15: break
+                if (now() - en.created_at).total_seconds() > 15:
+                    break
                 if en.target is not None and en.target.id == payload.channel_id:
-                    deleter = en.user; break
+                    deleter = en.user
+                    break
         except discord.Forbidden:
             deleter = "forbidden"
         except Exception:
             pass
+
         e = discord.Embed(title="🧹 Suppression en masse", color=RED)
-        e.add_field(name="📍 Salon", value=f"<#{payload.channel_id}>", inline=True)
-        e.add_field(name="🔢 Messages", value=str(len(payload.message_ids)), inline=True)
+        e.add_field(name="📍 Salon",   value=f"<#{payload.channel_id}>",       inline=True)
+        e.add_field(name="🔢 Messages", value=str(len(payload.message_ids)),    inline=True)
         e.add_field(name="🗑️ Supprime par", value=deleter_text(deleter) if deleter else "Inconnu", inline=False)
+
         cached = sorted(payload.cached_messages, key=lambda m: m.created_at)
         file = None
         if cached:
@@ -836,7 +803,8 @@ async def handle_bulk(payload):
             text = "\n".join(
                 f"[{m.created_at:%Y-%m-%d %H:%M:%S}] {m.author} ({m.author.id}): {m.content}"
                 + (" | PJ: " + ", ".join(a.url for a in m.attachments) if m.attachments else "")
-                for m in cached)
+                for m in cached
+            )
             file = discord.File(io.BytesIO(text.encode("utf-8")), filename="messages_supprimes.txt")
         emit(e, file)
     except Exception:
@@ -844,29 +812,32 @@ async def handle_bulk(payload):
 
 @client.event
 async def on_raw_bulk_message_delete(payload):
-    if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID: return
+    if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID:
+        return
     asyncio.create_task(handle_bulk(payload))
 
-# ════════════════════════════════════════════════════════════════
-#  MESSAGES : modification / envoi / reactions
-# ════════════════════════════════════════════════════════════════
 @client.event
 async def on_raw_message_edit(payload):
     try:
-        if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID: return
-        if "content" not in payload.data: return
+        if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID:
+            return
+        if "content" not in payload.data:
+            return
         after = payload.data["content"]
-        old = payload.cached_message
-        if old is not None and old.content == after: return
+        old   = payload.cached_message
+        if old is not None and old.content == after:
+            return
         e = discord.Embed(title="✏️ Message modifie", color=ORANGE)
         author = old.author if old else None
         if author is None and payload.data.get("author"):
-            uid = int(payload.data["author"]["id"])
+            uid    = int(payload.data["author"]["id"])
             author = client.get_user(uid) or discord.Object(id=uid)
         e.add_field(name="✍️ Auteur", value=who(author) if author else "Inconnu", inline=True)
-        e.add_field(name="📍 Salon", value=f"<#{payload.channel_id}>", inline=True)
-        e.add_field(name="🔗 Lien", value=f"[Aller au message]({link(payload.channel_id, payload.message_id)})", inline=True)
-        e.add_field(name="Avant", value=trunc(old.content, 1000) or "(vide)" if old else "(inconnu, pas en cache)", inline=False)
+        e.add_field(name="📍 Salon",  value=f"<#{payload.channel_id}>",           inline=True)
+        e.add_field(name="🔗 Lien",
+            value=f"[Aller au message]({link(payload.channel_id, payload.message_id)})", inline=True)
+        e.add_field(name="Avant",
+            value=trunc(old.content, 1000) or "(vide)" if old else "(inconnu, pas en cache)", inline=False)
         e.add_field(name="Apres", value=trunc(after, 1000) or "(vide)", inline=False)
         if isinstance(author, (discord.User, discord.Member)):
             e.set_thumbnail(url=author.display_avatar.url)
@@ -877,17 +848,21 @@ async def on_raw_message_edit(payload):
 @client.event
 async def on_message(message):
     try:
-        if not LOG_SENT or message.guild is None or message.guild.id != GUILD_ID or message.channel.id == LOGS_ID: return
-        e = discord.Embed(title="💬 Message envoye", color=BLUE if not message.author.bot else GREY)
-        e.add_field(name="✍️ Auteur", value=who(message.author), inline=True)
-        e.add_field(name="📍 Salon", value=message.channel.mention, inline=True)
-        e.add_field(name="🔗 Lien", value=f"[Aller au message]({message.jump_url})", inline=True)
+        if not LOG_SENT or message.guild is None or message.guild.id != GUILD_ID \
+                or message.channel.id == LOGS_ID:
+            return
+        color = BLUE if not message.author.bot else GREY
+        e = discord.Embed(title="💬 Message envoye", color=color)
+        e.add_field(name="✍️ Auteur", value=who(message.author),   inline=True)
+        e.add_field(name="📍 Salon",  value=message.channel.mention, inline=True)
+        e.add_field(name="🔗 Lien",   value=f"[Aller au message]({message.jump_url})", inline=True)
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 inter = message.interaction
             if inter is not None:
-                e.add_field(name="Commande slash", value=f"`/{inter.name}` par {inter.user.mention}", inline=False)
+                e.add_field(name="Commande slash",
+                    value=f"`/{inter.name}` par {inter.user.mention}", inline=False)
         except Exception:
             pass
         e.add_field(name="💬 Contenu", value=trunc(message.content, 1000) or "(aucun texte)", inline=False)
@@ -897,26 +872,28 @@ async def on_message(message):
     except Exception:
         traceback.print_exc()
 
-# Réactions : non loggées (trop fréquentes, peu utiles)
 
-# ════════════════════════════════════════════════════════════════
-#  MEMBRES
-# ════════════════════════════════════════════════════════════════
+# ---- membres ----
+
 @client.event
 async def on_member_join(member):
-    if member.guild.id != GUILD_ID: return
-    e = discord.Embed(title="🤖 Bot arrive" if member.bot else "📥 Membre arrive", color=GREEN)
-    e.add_field(name="👤 Membre", value=who(member), inline=False)
-    e.add_field(name="📅 Compte cree", value=ts(member.created_at), inline=False)
-    if (now() - member.created_at).days < 7:
-        e.add_field(name="⚠️ Compte recent", value=f"Cree il y a {(now() - member.created_at).days} jour(s)", inline=False)
+    if member.guild.id != GUILD_ID:
+        return
+    title = "🤖 Bot arrive" if member.bot else "📥 Membre arrive"
+    e = discord.Embed(title=title, color=GREEN)
+    e.add_field(name="👤 Membre",       value=who(member),               inline=False)
+    e.add_field(name="📅 Compte cree",  value=ts(member.created_at),     inline=False)
+    age = (now() - member.created_at).days
+    if age < 7:
+        e.add_field(name="⚠️ Compte recent", value=f"Cree il y a {age} jour(s)", inline=False)
     e.add_field(name="👥 Membres", value=str(member.guild.member_count), inline=True)
     e.set_thumbnail(url=member.display_avatar.url)
     emit(e)
 
 @client.event
 async def on_member_remove(member):
-    if member.guild.id != GUILD_ID: return
+    if member.guild.id != GUILD_ID:
+        return
     e = discord.Embed(title="📤 Membre parti", color=RED)
     e.add_field(name="👤 Membre", value=who(member), inline=False)
     if member.joined_at:
@@ -931,7 +908,8 @@ async def on_member_remove(member):
 @client.event
 async def on_user_update(before, after):
     guild = client.get_guild(GUILD_ID)
-    if not guild or not guild.get_member(after.id): return
+    if not guild or not guild.get_member(after.id):
+        return
     lines = []
     if before.name != after.name:
         lines.append(f"**Pseudo** : `{before.name}` -> `{after.name}`")
@@ -940,49 +918,43 @@ async def on_user_update(before, after):
     if before.avatar != after.avatar:
         lines.append(f"**Avatar** : [avant]({before.display_avatar.url}) -> [apres]({after.display_avatar.url})")
     if lines:
-        e = discord.Embed(title="Profil modifie", color=ORANGE, description=f"{who(after)}\n" + "\n".join(lines))
+        e = discord.Embed(title="Profil modifie", color=ORANGE,
+                          description=f"{who(after)}\n" + "\n".join(lines))
         e.set_thumbnail(url=after.display_avatar.url)
         emit(e)
 
 @client.event
 async def on_member_update(before, after):
-    if after.guild.id != GUILD_ID: return
+    if after.guild.id != GUILD_ID:
+        return
     if before.guild_avatar != after.guild_avatar:
         new = after.guild_avatar.url if after.guild_avatar else None
         old = before.guild_avatar.url if before.guild_avatar else None
         e = discord.Embed(title="Avatar de serveur modifie", color=ORANGE,
-            description=f"{who(after)}\nAvant : {old or 'aucun'}\nApres : {new or 'aucun'}")
+                          description=f"{who(after)}\nAvant : {old or 'aucun'}\nApres : {new or 'aucun'}")
         emit(e)
     if before.premium_since != after.premium_since:
         boost = after.premium_since is not None
-        emit(discord.Embed(title="Boost " + ("ajoute" if boost else "retire"), color=BLUE if boost else GREY,
-            description=who(after)))
+        emit(discord.Embed(
+            title="Boost " + ("ajoute" if boost else "retire"),
+            color=BLUE if boost else GREY,
+            description=who(after),
+        ))
 
-# ════════════════════════════════════════════════════════════════
-#  VOCAL
-# ════════════════════════════════════════════════════════════════
-VOICE_FLAGS = [
-    ("self_mute", "🎙️ Micro coupe (par lui)"), ("self_deaf", "🎧 Casque coupe (par lui)"),
-    ("mute", "🔇 Mute serveur"), ("deaf", "🔕 Sourd serveur"),
-    ("self_stream", "📺 Partage d'ecran"), ("self_video", "📷 Camera"), ("suppress", "🚫 Supprime (stage)"),
-]
 
-# Vocal : connexions/déconnexions non loggées (trop fréquentes, peu utiles)
-# Le raid sur les déconnexions forcées est toujours détecté via on_audit_log_entry_create
+# ---- automod ----
 
-# ════════════════════════════════════════════════════════════════
-#  AUTOMOD
-# ════════════════════════════════════════════════════════════════
 @client.event
 async def on_automod_action(execution):
     try:
-        if execution.guild_id != GUILD_ID: return
+        if execution.guild_id != GUILD_ID:
+            return
         e = discord.Embed(title="🛑 AutoMod declenche", color=RED)
         e.add_field(name="👤 Membre", value=f"<@{execution.user_id}> (`{execution.user_id}`)", inline=True)
         if execution.channel_id:
             e.add_field(name="📍 Salon", value=f"<#{execution.channel_id}>", inline=True)
         e.add_field(name="Action", value=f"`{execution.action.type.name}`", inline=True)
-        e.add_field(name="Regle", value=f"`{execution.rule_id}`", inline=True)
+        e.add_field(name="Regle",  value=f"`{execution.rule_id}`",          inline=True)
         if execution.matched_keyword:
             e.add_field(name="Mot detecte", value=f"`{trunc(execution.matched_keyword, 100)}`", inline=True)
         if execution.content:
@@ -991,56 +963,72 @@ async def on_automod_action(execution):
     except Exception:
         traceback.print_exc()
 
-# ════════════════════════════════════════════════════════════════
-#  LOGS D'AUDIT
-# ════════════════════════════════════════════════════════════════
+
+# ---- logs d'audit ----
+
 LABELS = {
-    "guild_update": ("⚙️", "Serveur modifie"),
-    "channel_create": ("📁", "Salon cree"), "channel_update": ("📝", "Salon modifie"), "channel_delete": ("🗑️", "Salon supprime"),
-    "overwrite_create": ("🔐", "Permission de salon ajoutee"), "overwrite_update": ("🔐", "Permission de salon modifiee"),
-    "overwrite_delete": ("🔐", "Permission de salon retiree"),
-    "kick": ("👢", "Membre expulse"), "member_prune": ("🧹", "Purge de membres inactifs"),
-    "ban": ("🔨", "Membre banni"), "unban": ("✅", "Membre debanni"),
-    "member_update": ("✏️", "Membre modifie (pseudo / timeout / mute)"),
-    "member_role_update": ("🎭", "Roles d'un membre modifies"),
-    "member_move": ("Membre deplace en vocal", ""), "member_disconnect": ("🔌", "Membre deconnecte du vocal"),
-    "bot_add": ("🤖", "Bot ajoute au serveur"),
-    "role_create": ("🎭", "Role cree"), "role_update": ("🎭", "Role modifie"), "role_delete": ("🎭", "Role supprime"),
-    "invite_create": ("🔗", "Invitation creee"), "invite_update": ("🔗", "Invitation modifiee"), "invite_delete": ("🔗", "Invitation supprimee"),
-    "webhook_create": ("Webhook cree", ""), "webhook_update": ("Webhook modifie", ""), "webhook_delete": ("Webhook supprime", ""),
-    "emoji_create": ("😀", "Emoji cree"), "emoji_update": ("😀", "Emoji modifie"), "emoji_delete": ("😀", "Emoji supprime"),
-    "message_pin": ("📌", "Message epingle"), "message_unpin": ("📌", "Message desepingle"),
-    "integration_create": ("Integration ajoutee", ""), "integration_update": ("Integration modifiee", ""), "integration_delete": ("Integration supprimee", ""),
-    "stage_instance_create": ("🎤", "Stage cree"), "stage_instance_update": ("🎤", "Stage modifie"), "stage_instance_delete": ("🎤", "Stage supprime"),
-    "sticker_create": ("Sticker cree", ""), "sticker_update": ("Sticker modifie", ""), "sticker_delete": ("Sticker supprime", ""),
-    "scheduled_event_create": ("📆", "Evenement cree"), "scheduled_event_update": ("📆", "Evenement modifie"), "scheduled_event_delete": ("📆", "Evenement supprime"),
-    "thread_create": ("🧵", "Fil cree"), "thread_update": ("🧵", "Fil modifie"), "thread_delete": ("🧵", "Fil supprime"),
-    "app_command_permission_update": ("Permissions de commande modifiees", ""),
-    "automod_rule_create": ("🛑", "Regle AutoMod creee"), "automod_rule_update": ("🛑", "Regle AutoMod modifiee"), "automod_rule_delete": ("🛑", "Regle AutoMod supprimee"),
-    "automod_block_message": ("🛑", "AutoMod : message bloque"), "automod_flag_message": ("🛑", "AutoMod : message signale"),
-    "automod_timeout_member": ("🛑", "AutoMod : membre mis en timeout"),
+    "guild_update":       ("⚙️",  "Serveur modifie"),
+    "channel_create":     ("📁",  "Salon cree"),
+    "channel_update":     ("📝",  "Salon modifie"),
+    "channel_delete":     ("🗑️", "Salon supprime"),
+    "overwrite_create":   ("🔐",  "Permission de salon ajoutee"),
+    "overwrite_update":   ("🔐",  "Permission de salon modifiee"),
+    "overwrite_delete":   ("🔐",  "Permission de salon retiree"),
+    "kick":               ("👢",  "Membre expulse"),
+    "member_prune":       ("🧹",  "Purge de membres inactifs"),
+    "ban":                ("🔨",  "Membre banni"),
+    "unban":              ("✅",  "Membre debanni"),
+    "member_update":      ("✏️", "Membre modifie (pseudo / timeout / mute)"),
+    "member_role_update": ("🎭",  "Roles d'un membre modifies"),
+    "member_disconnect":  ("🔌",  "Membre deconnecte du vocal"),
+    "bot_add":            ("🤖",  "Bot ajoute au serveur"),
+    "role_create":        ("🎭",  "Role cree"),
+    "role_update":        ("🎭",  "Role modifie"),
+    "role_delete":        ("🎭",  "Role supprime"),
+    "invite_create":      ("🔗",  "Invitation creee"),
+    "invite_update":      ("🔗",  "Invitation modifiee"),
+    "invite_delete":      ("🔗",  "Invitation supprimee"),
+    "webhook_create":     ("🪝",  "Webhook cree"),
+    "webhook_update":     ("🪝",  "Webhook modifie"),
+    "webhook_delete":     ("🪝",  "Webhook supprime"),
+    "emoji_create":       ("😀",  "Emoji cree"),
+    "emoji_update":       ("😀",  "Emoji modifie"),
+    "emoji_delete":       ("😀",  "Emoji supprime"),
+    "message_pin":        ("📌",  "Message epingle"),
+    "message_unpin":      ("📌",  "Message desepingle"),
+    "sticker_create":     ("🧷",  "Sticker cree"),
+    "sticker_update":     ("🧷",  "Sticker modifie"),
+    "sticker_delete":     ("🧷",  "Sticker supprime"),
+    "thread_create":      ("🧵",  "Fil cree"),
+    "thread_update":      ("🧵",  "Fil modifie"),
+    "thread_delete":      ("🧵",  "Fil supprime"),
+    "automod_rule_create":   ("🛑", "Regle AutoMod creee"),
+    "automod_rule_update":   ("🛑", "Regle AutoMod modifiee"),
+    "automod_rule_delete":   ("🛑", "Regle AutoMod supprimee"),
+    "automod_block_message": ("🛑", "AutoMod : message bloque"),
+    "automod_flag_message":  ("🛑", "AutoMod : message signale"),
+    "automod_timeout_member":("🛑", "AutoMod : membre mis en timeout"),
 }
-RED_ACTIONS = {"kick", "ban", "member_prune", "member_disconnect", "automod_block_message", "automod_timeout_member"}
+
+RED_ACTIONS   = {"kick", "ban", "member_prune", "member_disconnect",
+                 "automod_block_message", "automod_timeout_member"}
 GREEN_ACTIONS = {"unban", "bot_add"}
+
+# actions trop fréquentes ou peu utiles → on skip le log
 SKIP_AUDIT = {
     discord.AuditLogAction.message_delete,
     discord.AuditLogAction.message_bulk_delete,
-    # Vocal (connexions, déplacements, états) : trop fréquents
     discord.AuditLogAction.member_move,
     discord.AuditLogAction.member_disconnect,
-    # Threads : peu utiles en surveillance
     discord.AuditLogAction.thread_create,
     discord.AuditLogAction.thread_update,
     discord.AuditLogAction.thread_delete,
-    # Evénements planifiés : pas pertinent sécurité
     discord.AuditLogAction.scheduled_event_create,
     discord.AuditLogAction.scheduled_event_update,
     discord.AuditLogAction.scheduled_event_delete,
-    # Stage : rare et peu critique
     discord.AuditLogAction.stage_instance_create,
     discord.AuditLogAction.stage_instance_update,
     discord.AuditLogAction.stage_instance_delete,
-    # Intégrations : pas actionnables
     discord.AuditLogAction.integration_create,
     discord.AuditLogAction.integration_update,
     discord.AuditLogAction.integration_delete,
@@ -1048,7 +1036,7 @@ SKIP_AUDIT = {
 
 def audit_color(entry):
     n = entry.action.name
-    if n in RED_ACTIONS: return RED
+    if n in RED_ACTIONS:   return RED
     if n in GREEN_ACTIONS: return GREEN
     cat = entry.category
     if cat == discord.AuditLogActionCategory.create: return GREEN
@@ -1056,7 +1044,7 @@ def audit_color(entry):
     if cat == discord.AuditLogActionCategory.update: return ORANGE
     return GREY
 
-# ── Fusion des changements de rôles (même exécutant + même cible) ──
+# regroupement des changements de rôles (évite le spam si plusieurs rôles d'un coup)
 _role_buf: dict[tuple, dict] = {}
 
 def _dedupe(seq):
@@ -1067,9 +1055,10 @@ def short_target(t):
     return getattr(t, "mention", None) or f"`{t.id}`"
 
 async def _flush_roles(key):
-    await asyncio.sleep(2)          # fenêtre de regroupement
+    await asyncio.sleep(2)
     d = _role_buf.pop(key, None)
-    if not d: return
+    if not d:
+        return
     lines = [f"{who(d['user'])} ➜ {d['target']}"]
     if d["add"]: lines.append("➕ " + ", ".join(_dedupe(d["add"])))
     if d["rem"]: lines.append("➖ " + ", ".join(_dedupe(d["rem"])))
@@ -1081,7 +1070,7 @@ async def _flush_roles(key):
 
 def _handle_roles(entry):
     key = (entry.user_id, getattr(entry.target, "id", None))
-    d = _role_buf.get(key)
+    d   = _role_buf.get(key)
     if d is None:
         d = _role_buf[key] = {
             "user": entry.user, "target": short_target(entry.target),
@@ -1091,21 +1080,21 @@ def _handle_roles(entry):
         asyncio.create_task(_flush_roles(key))
     try:
         d["rem"] += [role_mention(r) for r in (getattr(entry.before, "roles", None) or [])]
-        d["add"] += [role_mention(r) for r in (getattr(entry.after, "roles", None) or [])]
+        d["add"] += [role_mention(r) for r in (getattr(entry.after,  "roles", None) or [])]
     except Exception:
         traceback.print_exc()
 
 @client.event
 async def on_audit_log_entry_create(entry):
-    # Raid detection : tourne toujours, indépendamment du filtre SKIP_AUDIT
+    # la détection raid tourne toujours, même pour les actions qu'on skip en log
     if entry.guild.id == GUILD_ID:
         asyncio.create_task(_check_raid(entry))
 
     try:
-        if entry.guild.id != GUILD_ID or entry.action in SKIP_AUDIT: return
+        if entry.guild.id != GUILD_ID or entry.action in SKIP_AUDIT:
+            return
         name = entry.action.name
 
-        # Rôles : un seul log regroupé
         if name == "member_role_update":
             _handle_roles(entry)
             return
@@ -1113,9 +1102,8 @@ async def on_audit_log_entry_create(entry):
         label_data = LABELS.get(name, ("📋", name.replace("_", " ").capitalize()))
         emoji, label = (label_data[0], label_data[1]) if label_data[1] else ("📋", label_data[0])
 
-        # Format compact : tout dans la description
         head = who(entry.user) if entry.user else f"`{entry.user_id}`"
-        tgt = short_target(entry.target) if entry.target is not None else None
+        tgt  = short_target(entry.target) if entry.target is not None else None
         lines = [f"{head} ➜ {tgt}" if tgt else head]
         if entry.reason:
             lines.append(f"📝 {trunc(entry.reason, 300)}")
@@ -1124,16 +1112,18 @@ async def on_audit_log_entry_create(entry):
             lines.append(trunc(extra.replace("\n", " • "), 300))
         lines += [c.strip() for c in changes_chunks(entry)]
 
-        e = discord.Embed(title=f"{emoji} {label}", color=audit_color(entry),
-                          description=trunc("\n".join(lines), 3500),
-                          timestamp=entry.created_at)
+        e = discord.Embed(
+            title=f"{emoji} {label}",
+            color=audit_color(entry),
+            description=trunc("\n".join(lines), 3500),
+            timestamp=entry.created_at,
+        )
         e.set_footer(text=f"Audit ID {entry.id}")
         emit(e)
     except Exception:
         traceback.print_exc()
 
-# ════════════════════════════════════════════════════════════════
-#  LANCEMENT
-# ════════════════════════════════════════════════════════════════
+
+# lancement tu connais 
 if __name__ == "__main__":
     client.run(TOKEN)
