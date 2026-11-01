@@ -29,9 +29,9 @@ ALERT_ROLE_ID    = 1566238799002992640   # rôle pingé dans #alertes
 FONDATEUR_ID     = 1419320803199029402   # mention dans les messages de ban / DM
 FONDATION_ID     = 1558327588710121554   # contact fondation pour l'avertissement
 
-MUTE_LIMIT = 2;  MUTE_WINDOW = 5  * 60   # 2 actions en 5 min
-DEAF_LIMIT = 2;  DEAF_WINDOW = 5  * 60   # 2 actions en 5 min
-DC_LIMIT   = 5;  DC_WINDOW   = 15 * 60   # 5 actions en 15 min
+MUTE_LIMIT = 4;  MUTE_WINDOW = 5  * 60   # 4 actions en 5 min
+DEAF_LIMIT = 4;  DEAF_WINDOW = 5  * 60   # 4 actions en 5 min
+DC_LIMIT   = 4;  DC_WINDOW   = 5  * 60   # 4 actions en 5 min
 
 _mute_track:  dict[int, list[float]] = {}
 _deaf_track:  dict[int, list[float]] = {}
@@ -427,8 +427,8 @@ class RaidAlertView(discord.ui.View):
                     f"Cependant, tu as été détecté par notre système de surveillance automatique "
                     f"(**Raidlogs**) pour **abus de permissions**.\n\n"
                     f"\n> 🚫 **Ne répète pas ce comportement.**\n"
-                    f"> Tout nouvel abus entraînera un **bannissement immédiat et définitif** du serveur, "
-                    f"sans possibilité d'appel.\n\n"
+                    f"> Tout nouvel abus entraînera un **Jugement immédiat des Fondateurs** ainsi que "
+                    f"l'**équipe de Modération du Serveur**.\n\n"
                     f"En cas de question, contacte <@{FONDATION_ID}> et un membre de la fondation te répondra."
                 ),
             )
