@@ -699,13 +699,12 @@ async def on_ready():
         e.description = "⚠️ Le bot n'est pas dans le serveur configuré (GUILD_ID)."
     emit(e)
 
-    # Embeds de démarrage dans les 3 salons
+    # Embed alerte démarrage dans #alertes
     if guild:
-        # — #alertes : embed complet avec règles de détection
         alert_ch = guild.get_channel(ALERT_ID)
         if alert_ch:
             try:
-                startup_alert = discord.Embed(
+                startup_embed = discord.Embed(
                     title="🟢 Système de protection en ligne",
                     color=0x57F287,
                     description=(
@@ -718,50 +717,9 @@ async def on_ready():
                         f"*Toute infraction déclenchera une alerte dans ce salon.*"
                     ),
                 )
-                startup_alert.set_footer(text="Shotojo • Système de surveillance automatique")
-                startup_alert.timestamp = now()
-                await alert_ch.send(embed=startup_alert)
-            except Exception:
-                traceback.print_exc()
-
-        # — #raidlogs : confirmation courte
-        raid_ch = guild.get_channel(RAID_LOG_ID)
-        if raid_ch:
-            try:
-                startup_raid = discord.Embed(
-                    title="🟢 Raidlogs en ligne",
-                    color=0x57F287,
-                    description=(
-                        f">>> ✅ **Le module anti-raid est actif.**\n\n"
-                        f"**🛡️ Serveur :** {guild.name}\n"
-                        f"**📋 Ce salon recevra les rapports de sanctions automatiques.**\n\n"
-                        f"*Seuils : {MUTE_LIMIT} mutes · {DEAF_LIMIT} sourds · {DC_LIMIT} déco — en {MUTE_WINDOW // 60} min*"
-                    ),
-                )
-                startup_raid.set_footer(text="Shotojo • Système de surveillance automatique")
-                startup_raid.timestamp = now()
-                await raid_ch.send(embed=startup_raid)
-            except Exception:
-                traceback.print_exc()
-
-        # — salon logs principal : confirmation courte
-        logs_ch = guild.get_channel(LOGS_ID)
-        if logs_ch:
-            try:
-                startup_logs = discord.Embed(
-                    title="🟢 Logs en ligne",
-                    color=0x57F287,
-                    description=(
-                        f">>> ✅ **Le système de logs est opérationnel.**\n\n"
-                        f"**🛡️ Serveur :** {guild.name}\n"
-                        f"**📋 Ce salon recevra les événements du serveur** "
-                        f"(messages, rôles, membres, sanctions…)\n\n"
-                        f"*Les événements non pertinents sont automatiquement filtrés.*"
-                    ),
-                )
-                startup_logs.set_footer(text="Shotojo • Système de surveillance automatique")
-                startup_logs.timestamp = now()
-                await logs_ch.send(embed=startup_logs)
+                startup_embed.set_footer(text="Shotojo • Système de surveillance automatique")
+                startup_embed.timestamp = now()
+                await alert_ch.send(embed=startup_embed)
             except Exception:
                 traceback.print_exc()
 
